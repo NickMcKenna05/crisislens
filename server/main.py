@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from jose import JWTError
 
 from config import settings
-from routers import portfolios, auth_email
+from routers import portfolios, auth_email, tickers
 
 app = FastAPI(
     title="CrisisLens API",
@@ -15,7 +15,7 @@ app = FastAPI(
 # CORS middleware - allows frontend to make requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins, #From ALLOWED_ORIGINS environment variable
+    allow_origins=["http://localhost:3000"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -24,6 +24,7 @@ app.add_middleware(
 #Include routers
 app.include_router(portfolios.router)
 app.include_router(auth_email.router)
+app.include_router(tickers.router)
 
 # Global exception handler for JWT errors
 @app.exception_handler(JWTError)
@@ -48,3 +49,5 @@ def read_root():
 def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+    

@@ -6,31 +6,35 @@ from config import settings
 
 
 def verify_supabase_jwt(token: str) -> dict:
-    """
-    Verify a Supabase JWT by calling Supabase's /auth/v1/user endpoint.
-    Supabase validates the token server-side and returns the user data.
-    """
-    url = f"{settings.SUPABASE_URL}/auth/v1/user"
+    # Ensure the URL doesn't have a double slash
+    base_url = settings.SUPABASE_URL.rstrip('/')
+    url = f"{base_url}/auth/v1/user"
+    
     req = urllib.request.Request(url)
+    
+    # Supabase expects 'apikey' AND 'Authorization'
     req.add_header("apikey", settings.SUPABASE_ANON_KEY)
     req.add_header("Authorization", f"Bearer {token}")
 
     try:
-        with urllib.request.urlopen(req) as response:
+        # We add a timeout to prevent the server from hanging
+        with urllib.request.urlopen(req, timeout=5) as response:
             user_data = json.loads(response.read())
+            return {
+                "sub": user_data["id"],
+                "email": user_data.get("email"),
+                "role": user_data.get("role", "authenticated"),
+            }
     except urllib.error.HTTPError as e:
+        # Log the actual response body from Supabase for debugging
+        error_body = e.read().decode()
+        print(f"Supabase Auth Error: {e.code} - {error_body}")
+        
         if e.code == 401:
-            raise JWTError("Token expired or invalid")
-        raise JWTError(f"Token verification failed: {e.code} {e.reason}")
-
-    if not user_data.get("id"):
-        raise JWTError("Invalid token: no user ID returned")
-
-    return {
-        "sub": user_data["id"],
-        "email": user_data.get("email"),
-        "role": user_data.get("role", "authenticated"),
-    }
+            raise JWTError("Session expired or invalid token")
+        if e.code == 403:
+            raise JWTError("Supabase rejected the request (check your API Key/URL)")
+        raise JWTError(f"Token verification failed: {e.code}")
 
 
 def extract_user_from_token(payload: dict) -> dict:

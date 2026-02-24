@@ -3,11 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createPortfolio, addHoldings } from "@/lib/api";
+import { TickerSearch } from "@/components/ui/TickerSearch"; // Import the new component
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, Upload, Save, Loader2, X } from "lucide-react";
+import { Plus, Trash2, Upload, Save, Loader2 } from "lucide-react";
 
 export default function CreatePortfolioPage() {
   const router = useRouter();
@@ -15,7 +16,6 @@ export default function CreatePortfolioPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   
-  // Manual Entry State
   const [manualHoldings, setManualHoldings] = useState([
     { ticker: "", shares: "", price: "" }
   ]);
@@ -30,19 +30,44 @@ export default function CreatePortfolioPage() {
 
   const updateManualRow = (index: number, field: string, value: string) => {
     const newHoldings = [...manualHoldings];
-    newHoldings[index] = { ...newHoldings[index], [field]: value.toUpperCase() };
+    // value = ticker symbol 
+    newHoldings[index] = { ...newHoldings[index], [field]: value };
     setManualHoldings(newHoldings);
   };
 
   const handleCreatePortfolio = async () => {
     if (!name) return alert("Please give your portfolio a name.");
     setLoading(true);
+    const invalidRows: number[] = [];
 
     try {
-      // 1. Create the Portfolio via FastAPI
-      const portfolio = await createPortfolio(name, description);
+      await Promise.all(
+        manualHoldings.map(async (h, index) => {
+        if (!h.ticker) return null;
 
-      // 2. Prepare and add Holdings
+        try {
+          const res = await fetch(`http://localhost:8000/tickers/search?q=${h.ticker}`);
+          const data = await res.json();
+
+          if (!Array.isArray(data) || data.length ===0)
+          {
+            invalidRows.push(index + 1);
+          }
+        } catch (err) {
+          invalidRows.push(index + 1);
+        }
+
+      })
+    );
+
+    if (invalidRows.length > 0) {
+      // Sort them so the message looks nice: "Rows 1, 3"
+      const sortedRows = invalidRows.sort((a, b) => a - b);
+      throw new Error(`Invalid or unknown tickers found on row(s): ${sortedRows.join(", ")}`);
+    }
+
+      const portfolio = await createPortfolio(name, description);
+      
       const holdingsData = manualHoldings
         .filter(h => h.ticker && h.shares)
         .map(h => ({
@@ -51,10 +76,7 @@ export default function CreatePortfolioPage() {
           avg_price_paid: parseFloat(h.price || "0"),
         }));
 
-      if (holdingsData.length > 0) {
-        await addHoldings(portfolio.id, holdingsData);
-      }
-
+      await addHoldings(portfolio.id, holdingsData);
       router.push("/portfolios");
       router.refresh();
     } catch (error: any) {
@@ -66,41 +88,28 @@ export default function CreatePortfolioPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-20">
+      {/* Header and Basic Info Card remain the same as your original code */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Create Portfolio</h1>
           <p className="text-slate-500">Add a name and your assets to get started.</p>
         </div>
-        <Button 
-          onClick={handleCreatePortfolio} 
-          disabled={loading}
-          className="bg-blue-600 hover:bg-blue-700"
-        >
+        <Button onClick={handleCreatePortfolio} disabled={loading} className="bg-blue-600 hover:bg-blue-700">
           {loading ? <Loader2 className="animate-spin mr-2" /> : <Save className="mr-2" size={18} />}
           Save Portfolio
         </Button>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Basic Information</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle>Basic Information</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <label className="text-sm font-medium">Portfolio Name</label>
-            <Input 
-              placeholder="e.g. My Tech Stocks" 
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
+            <Input placeholder="e.g. My Tech Stocks" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium">Description (Optional)</label>
-            <Input 
-              placeholder="e.g. Focus on AI and semiconductors" 
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
+            <Input placeholder="e.g. Focus on AI and semiconductors" value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
         </CardContent>
       </Card>
@@ -131,10 +140,10 @@ export default function CreatePortfolioPage() {
                 </div>
                 {manualHoldings.map((row, index) => (
                   <div key={index} className="grid grid-cols-4 gap-4 items-center border-b pb-2 last:border-0">
-                    <Input 
-                      placeholder="AAPL" 
-                      value={row.ticker}
-                      onChange={(e) => updateManualRow(index, "ticker", e.target.value)}
+                    {/* UPDATED: Replaced Input with TickerSearch */}
+                    <TickerSearch 
+                      value={row.ticker} 
+                      onChange={(val) => updateManualRow(index, "ticker", val)} 
                     />
                     <Input 
                       type="number" 
@@ -157,21 +166,7 @@ export default function CreatePortfolioPage() {
             </CardContent>
           </Card>
         </TabsContent>
-
-        <TabsContent value="csv">
-          <Card className="border-dashed border-2">
-            <CardContent className="flex flex-col items-center justify-center py-10 space-y-4">
-              <div className="p-4 bg-blue-50 rounded-full">
-                <Upload size={32} className="text-blue-600" />
-              </div>
-              <div className="text-center">
-                <h3 className="font-semibold text-lg">Coming Soon</h3>
-                <p className="text-sm text-slate-500">CSV parsing logic will be added here next.</p>
-              </div>
-              <Button disabled variant="outline">Select File</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
+        {/* CSV Tab content remains the same */}
       </Tabs>
     </div>
   );

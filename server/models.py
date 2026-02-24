@@ -45,3 +45,21 @@ class Holding(Base):
     
     def __repr__(self):
         return f"<Holding(id={self.id}, ticker={self.ticker}, shares={self.shares})>"
+
+class GlobalTicker(Base):
+    """
+    GlobalTicker model for autocomplete and ticker validation. 
+    Maps to teh globa;_tickers table in supabase.
+    """
+    __tablename__ = "global_tickers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    symbol = Column(String(20), unique=True, index=True, nullable=False)
+    name = Column(String(255))
+    exchange = Column(String(50))
+    sector = Column(String(100))
+    industry = Column(String(255))
+    created_at = Column(DateTime, default=datetime.now(UTC), nullable=False)
+
+    def __repr__(self):
+        return f"<GlobalTicker(symbol={self.symbol}, name={self.name})>"

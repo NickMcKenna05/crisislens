@@ -44,3 +44,6 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+print(f"DEBUG: Loaded JWT Secret: {settings.SUPABASE_JWT_SECRET[:5]}...") 
+print(f"DEBUG: Allowed Origins: {settings.cors_origins}")
