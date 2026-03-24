@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { toPng } from "html-to-image";
 import {
   ResponsiveContainer,
@@ -13,7 +13,8 @@ import {
   ReferenceLine,
 } from "recharts";
 import { Button } from "@/components/ui/button";
-import { Download, Image as ImageIcon, Table } from "lucide-react";
+import { Image as ImageIcon, Table, Loader2 } from "lucide-react";
+import { fetchScenarioAnalysis } from "@/lib/api";
 
 interface PerformanceChartProps {
   scenarioId: string;
@@ -21,6 +22,9 @@ interface PerformanceChartProps {
   startDate?: string;
   endDate?: string;
   portfolioId?: string;
+  portfolioName?: string;
+  onMetricsUpdate?: (metrics: any) => void;
+  markers?: { date: string; label: string }[];
 }
 
 type ChartPoint = {
@@ -35,117 +39,61 @@ export default function PerformanceChart({
   startDate,
   endDate,
   portfolioId,
+  portfolioName,
+  onMetricsUpdate,
+  markers = [], 
 }: PerformanceChartProps) {
   const chartRef = useRef<HTMLDivElement>(null);
+  
+  const [data, setData] = useState<ChartPoint[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const data = useMemo<ChartPoint[]>(() => {
-    const scenarioDataMap: Record<string, ChartPoint[]> = {
-      "covid-19": [
-        { date: "Pre-Crash", portfolio: 100, market: 100 },
-        { date: "Feb 2020", portfolio: 96, market: 94 },
-        { date: "Mar 2020", portfolio: 72, market: 68 },
-        { date: "Bottom", portfolio: 66, market: 63 },
-        { date: "Recovery", portfolio: 88, market: 84 },
-        { date: "Post-Crash", portfolio: 104, market: 99 },
-      ],
-      "great-recession": [
-        { date: "2007 Q4", portfolio: 100, market: 100 },
-        { date: "Bear Start", portfolio: 92, market: 89 },
-        { date: "Lehman", portfolio: 74, market: 69 },
-        { date: "Bottom", portfolio: 58, market: 55 },
-        { date: "Recovery", portfolio: 77, market: 73 },
-        { date: "2009 Q4", portfolio: 90, market: 87 },
-      ],
-      "dot-com-bubble": [
-        { date: "Peak", portfolio: 100, market: 100 },
-        { date: "Selloff", portfolio: 90, market: 93 },
-        { date: "Tech Crash", portfolio: 68, market: 81 },
-        { date: "Bottom", portfolio: 52, market: 76 },
-        { date: "Stabilizing", portfolio: 61, market: 80 },
-        { date: "Aftermath", portfolio: 70, market: 84 },
-      ],
-      "black-monday": [
-        { date: "T-1w", portfolio: 100, market: 100 },
-        { date: "T-2d", portfolio: 98, market: 97 },
-        { date: "Crash Start", portfolio: 83, market: 80 },
-        { date: "Bottom", portfolio: 71, market: 69 },
-        { date: "Rebound", portfolio: 79, market: 77 },
-        { date: "T+2w", portfolio: 86, market: 84 },
-      ],
-      "debt-ceiling-crisis": [
-        { date: "Apr 2011", portfolio: 100, market: 100 },
-        { date: "Debate", portfolio: 97, market: 95 },
-        { date: "Downgrade Fear", portfolio: 88, market: 84 },
-        { date: "Bottom", portfolio: 81, market: 80 },
-        { date: "Relief", portfolio: 90, market: 88 },
-        { date: "Aftermath", portfolio: 95, market: 93 },
-      ],
-      "oil-embargo-recession": [
-        { date: "Pre-Embargo", portfolio: 100, market: 100 },
-        { date: "Shock", portfolio: 90, market: 88 },
-        { date: "Inflation Spike", portfolio: 76, market: 73 },
-        { date: "Bottom", portfolio: 61, market: 58 },
-        { date: "Recession", portfolio: 64, market: 61 },
-        { date: "Stabilizing", portfolio: 72, market: 69 },
-      ],
-      "rate-hike-bear-market": [
-        { date: "Jan 2022", portfolio: 100, market: 100 },
-        { date: "Q1", portfolio: 93, market: 91 },
-        { date: "Q2", portfolio: 81, market: 79 },
-        { date: "Bottom", portfolio: 73, market: 76 },
-        { date: "Relief Rally", portfolio: 79, market: 82 },
-        { date: "Oct 2022", portfolio: 77, market: 80 },
-      ],
-      "russia-ukraine-war": [
-        { date: "Pre-Invasion", portfolio: 100, market: 100 },
-        { date: "Invasion", portfolio: 94, market: 92 },
-        { date: "Commodity Shock", portfolio: 84, market: 85 },
-        { date: "Bottom", portfolio: 79, market: 80 },
-        { date: "Adjustment", portfolio: 87, market: 86 },
-        { date: "Mid-2022", portfolio: 90, market: 89 },
-      ],
-      "svb-banking-crisis": [
-        { date: "Pre-Crisis", portfolio: 100, market: 100 },
-        { date: "SVB News", portfolio: 96, market: 97 },
-        { date: "Bank Run", portfolio: 89, market: 91 },
-        { date: "Bottom", portfolio: 87, market: 90 },
-        { date: "Support", portfolio: 93, market: 95 },
-        { date: "Recovery", portfolio: 97, market: 98 },
-      ],
-      "volcker-shock": [
-        { date: "1979", portfolio: 100, market: 100 },
-        { date: "Rate Surge", portfolio: 93, market: 94 },
-        { date: "Tightening", portfolio: 84, market: 86 },
-        { date: "Bottom", portfolio: 73, market: 75 },
-        { date: "Inflation Eases", portfolio: 79, market: 81 },
-        { date: "1982", portfolio: 88, market: 89 },
-      ],
-      volmageddon: [
-        { date: "Jan 2018", portfolio: 100, market: 100 },
-        { date: "Vol Spike", portfolio: 94, market: 95 },
-        { date: "Panic", portfolio: 88, market: 90 },
-        { date: "Bottom", portfolio: 84, market: 87 },
-        { date: "Bounce", portfolio: 91, market: 92 },
-        { date: "Late Feb", portfolio: 95, market: 96 },
-      ],
-    };
+  useEffect(() => {
+    async function loadAnalysis() {
+      if (!portfolioId || !startDate || !endDate || !scenarioId) return;
 
-    const fallback = [
-      { date: "T-1m", portfolio: 100, market: 100 },
-      { date: "Crash Start", portfolio: 95, market: 92 },
-      { date: "Peak Fear", portfolio: 70, market: 65 },
-      { date: "Bottom", portfolio: 62, market: 58 },
-      { date: "Recovery", portfolio: 85, market: 80 },
-      { date: "T+1m", portfolio: 105, market: 98 },
-    ];
+      try {
+        setIsLoading(true);
+        setError("");
+        
+        const result = await fetchScenarioAnalysis(portfolioId, startDate, endDate, scenarioId);
+        
+        if (result && Array.isArray(result.data)) {
+            setData(result.data);
+        } else {
+            setData(Array.isArray(result) ? result : []);
+        }
 
-    const fullData = scenarioDataMap[scenarioId] || fallback;
-    return isZoomed ? fullData.slice(1, 4) : fullData;
-  }, [scenarioId, isZoomed]);
+        if (onMetricsUpdate && result.metrics) {
+            onMetricsUpdate(result.metrics);
+        }
+
+      } catch (err: any) {
+        console.error("Chart fetch error:", err);
+        setError("Failed to load historical data for this scenario.");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadAnalysis();
+  }, [portfolioId, startDate, endDate, scenarioId, onMetricsUpdate]);
+
+  const displayData = useMemo<ChartPoint[]>(() => {
+    if (!Array.isArray(data) || data.length === 0) return [];
+    
+    if (!isZoomed) return data;
+    
+    const quarterLength = Math.floor(data.length / 4);
+    return data.slice(quarterLength, data.length - quarterLength);
+  }, [data, isZoomed]);
 
   function exportCSV() {
+    if (!Array.isArray(displayData)) return;
+    
     const headers = ["Date", "Portfolio", "Market"];
-    const rows = data.map((point) => [point.date, point.portfolio, point.market]);
+    const rows = displayData.map((point: ChartPoint) => [point.date, point.portfolio, point.market]);
     const csv = [headers, ...rows].map((row) => row.join(",")).join("\n");
 
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -179,8 +127,34 @@ export default function PerformanceChart({
     }
   }
 
+  if (isLoading) {
+    return (
+      <div className="w-full h-[450px] flex flex-col items-center justify-center text-slate-400 bg-slate-50 rounded-xl border border-slate-100">
+        <Loader2 className="h-8 w-8 animate-spin mb-4 text-blue-500" />
+        <p>Crunching historical data...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="w-full h-[450px] flex items-center justify-center text-red-500 bg-red-50 rounded-xl border border-red-100 px-6 text-center">
+        <p>{error}</p>
+      </div>
+    );
+  }
+
+  if (!Array.isArray(displayData) || displayData.length === 0) {
+    return (
+      <div className="w-full h-[450px] flex flex-col items-center justify-center text-slate-400 bg-slate-50 rounded-xl border border-slate-100 text-center px-6">
+        <p>No historical data available for this timeline.</p>
+        <p className="text-xs mt-2">Note: Some stocks in this portfolio may not have existed during this crisis.</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="w-full h-full min-h-[350px] space-y-4">
+    <div className="w-full space-y-4">
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={exportCSV}>
           <Table className="mr-2 h-4 w-4" />
@@ -200,7 +174,7 @@ export default function PerformanceChart({
         </div>
         <div>
           <span className="font-medium text-slate-800">Portfolio:</span>{" "}
-          {portfolioId || "Not selected"}
+          {portfolioName || "Not selected"} 
         </div>
         <div>
           <span className="font-medium text-slate-800">Window:</span>{" "}
@@ -208,9 +182,9 @@ export default function PerformanceChart({
         </div>
       </div>
 
-      <div ref={chartRef} className="w-full h-full min-h-[350px] rounded-xl bg-white p-4">
+      <div ref={chartRef} className="w-full rounded-xl bg-white pt-2 pb-6">
         <ResponsiveContainer width="100%" height={350}>
-          <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+          <AreaChart data={displayData} margin={{ top: 30, right: 15, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="colorPort" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#2563eb" stopOpacity={0.1} />
@@ -234,7 +208,8 @@ export default function PerformanceChart({
               fontSize={11}
               tickLine={false}
               axisLine={false}
-              tickFormatter={(value) => `$${value}`}
+              domain={['auto', 'auto']}
+              tickFormatter={(value) => `${value}`}
             />
 
             <Tooltip
@@ -245,6 +220,7 @@ export default function PerformanceChart({
                 color: "#fff",
               }}
               itemStyle={{ color: "#fff" }}
+              formatter={(value: any) => [Number(value || 0).toFixed(2), "Index Value"]}
             />
 
             <Area
@@ -254,7 +230,7 @@ export default function PerformanceChart({
               fill="transparent"
               strokeWidth={2}
               strokeDasharray="5 5"
-              name="S&P 500"
+              name="S&P 500 (SPY)"
             />
 
             <Area
@@ -268,15 +244,47 @@ export default function PerformanceChart({
               animationDuration={1500}
             />
 
+            {/* SMART MARKERS: 3-Tier Stagger + Edge Detection */}
+            {markers.map((marker, index) => {
+              // 1. Create a 3-tier waterfall (0, 20, 40) for dense clusters
+              const staggerLevel = index % 3;
+              const verticalPush = staggerLevel * 20;
+
+              // 2. Prevent right-edge clipping: If it's the last marker, anchor it to the left side of the line
+              const isLastMarker = index === markers.length - 1;
+              const textPosition = isLastMarker ? "insideTopRight" : "insideTopLeft";
+              const horizontalPush = isLastMarker ? -5 : 5;
+
+              return (
+                <ReferenceLine
+                  key={`marker-${index}`}
+                  x={marker.date}
+                  stroke="#ef4444"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 4"
+                  label={{
+                    position: textPosition,
+                    value: marker.label,
+                    fill: "#ef4444",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    dy: verticalPush,
+                    dx: horizontalPush
+                  }}
+                />
+              );
+            })}
+
             {isZoomed && (
               <ReferenceLine
                 x="Bottom"
                 stroke="#ef4444"
                 label={{
-                  position: "top",
+                  position: "insideTopLeft",
                   value: "Max Drawdown",
                   fill: "#ef4444",
-                  fontSize: 10,
+                  fontSize: 12,
+                  fontWeight: 600,
                 }}
               />
             )}
@@ -284,21 +292,21 @@ export default function PerformanceChart({
         </ResponsiveContainer>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border">
+      <div className="max-h-[250px] overflow-y-auto rounded-xl border">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50">
+          <thead className="sticky top-0 bg-slate-50 z-10 shadow-sm">
             <tr>
-              <th className="px-4 py-2 text-left font-medium text-slate-600">Date</th>
-              <th className="px-4 py-2 text-left font-medium text-slate-600">Portfolio</th>
-              <th className="px-4 py-2 text-left font-medium text-slate-600">Market</th>
+              <th className="px-4 py-3 text-left font-medium text-slate-600">Date</th>
+              <th className="px-4 py-3 text-left font-medium text-slate-600">Portfolio Index</th>
+              <th className="px-4 py-3 text-left font-medium text-slate-600">S&P 500 Index</th>
             </tr>
           </thead>
           <tbody>
-            {data.map((point) => (
+            {Array.isArray(displayData) && displayData.map((point: ChartPoint) => (
               <tr key={point.date} className="border-t">
                 <td className="px-4 py-2">{point.date}</td>
-                <td className="px-4 py-2">${point.portfolio}</td>
-                <td className="px-4 py-2">${point.market}</td>
+                <td className="px-4 py-2 font-medium">{point.portfolio.toFixed(2)}</td>
+                <td className="px-4 py-2 text-slate-500">{point.market.toFixed(2)}</td>
               </tr>
             ))}
           </tbody>

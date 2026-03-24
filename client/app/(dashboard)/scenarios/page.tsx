@@ -44,7 +44,7 @@ export default function ScenariosPage() {
                   {scenario.maxDrawdown !== undefined && (
                     <p>
                       <span className="font-medium">Max Drawdown:</span>{' '}
-                      {scenario.maxDrawdown}%
+                      {scenario.maxDrawdown}
                     </p>
                   )}
                 </div>

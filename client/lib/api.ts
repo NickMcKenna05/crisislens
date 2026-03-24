@@ -247,3 +247,23 @@ export async function fetchCustomScenarios() {
   if (!res.ok) throw new Error("Failed to fetch custom scenarios");
   return res.json();
 }
+
+export async function fetchScenarioAnalysis(
+  portfolioId: string, 
+  start: string, 
+  end: string, 
+  scenario: string // 1. Make sure this is here!
+) {
+  const headers = await getAuthHeaders();
+  
+  // 2. Make sure 'scenario' is included in the URLSearchParams!
+  const params = new URLSearchParams({ start, end, scenario });
+  
+  const res = await fetch(
+    `${API_URL}/portfolios/${portfolioId}/analyze?${params.toString()}`,
+    { headers }
+  );
+
+  if (!res.ok) throw new Error("Failed to fetch scenario analysis");
+  return res.json();
+}
