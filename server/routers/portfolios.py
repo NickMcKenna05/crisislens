@@ -9,7 +9,7 @@ import yfinance as yf
 import pandas as pd
 
 from dependencies import CurrentUser, DBSession
-from models import Portfolio, Holding, AnalysisRun
+from models import Portfolio, Holding, AnalysisRun, CustomScenario
 
 router = APIRouter(
     prefix="/portfolios",
@@ -82,6 +82,26 @@ class AnalysisRunResponse(BaseModel):
         from_attributes = True
 
 
+class CustomScenarioCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    start_date: str
+    end_date: str
+
+
+class CustomScenarioResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    title: str
+    description: Optional[str]
+    start_date: str
+    end_date: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 # --- PORTFOLIO ROUTES ---
 
 @router.get("/", response_model=List[PortfolioResponse])
@@ -107,6 +127,121 @@ async def create_portfolio(portfolio_data: PortfolioCreate, user: CurrentUser, d
     db.refresh(new_portfolio)
     return new_portfolio
 
+
+# --- ANALYSIS RUN HISTORY ROUTES (FR-13) ---
+# These must be defined BEFORE /{portfolio_id} to avoid being matched as a portfolio ID
+
+@router.post("/analysis-runs", response_model=AnalysisRunResponse, status_code=status.HTTP_201_CREATED)
+async def save_analysis_run(run_data: AnalysisRunCreate, user: CurrentUser, db: DBSession):
+    portfolio = (
+        db.query(Portfolio)
+        .filter(
+            Portfolio.id == run_data.portfolio_id,
+            Portfolio.user_id == user["user_id"]
+        )
+        .first()
+    )
+
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    new_run = AnalysisRun(
+        id=uuid.uuid4(),
+        user_id=user["user_id"],
+        portfolio_id=run_data.portfolio_id,
+        scenario_id=run_data.scenario_id,
+        scenario_name=run_data.scenario_name,
+        start_date=run_data.start_date,
+        end_date=run_data.end_date,
+        vulnerability_score=run_data.vulnerability_score,
+        timeline_view=run_data.timeline_view,
+        notes=run_data.notes,
+    )
+
+    db.add(new_run)
+    db.commit()
+    db.refresh(new_run)
+    return new_run
+
+
+@router.get("/analysis-runs", response_model=List[AnalysisRunResponse])
+async def get_analysis_runs(user: CurrentUser, db: DBSession):
+    runs = (
+        db.query(AnalysisRun)
+        .filter(AnalysisRun.user_id == user["user_id"])
+        .order_by(AnalysisRun.created_at.desc())
+        .all()
+    )
+    return runs
+
+
+@router.get("/analysis-runs/{run_id}", response_model=AnalysisRunResponse)
+async def get_analysis_run(run_id: UUID, user: CurrentUser, db: DBSession):
+    run = (
+        db.query(AnalysisRun)
+        .filter(
+            AnalysisRun.id == run_id,
+            AnalysisRun.user_id == user["user_id"]
+        )
+        .first()
+    )
+
+    if not run:
+        raise HTTPException(status_code=404, detail="Analysis run not found")
+
+    return run
+
+
+@router.delete("/analysis-runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_analysis_run(run_id: UUID, user: CurrentUser, db: DBSession):
+    run = (
+        db.query(AnalysisRun)
+        .filter(
+            AnalysisRun.id == run_id,
+            AnalysisRun.user_id == user["user_id"]
+        )
+        .first()
+    )
+
+    if not run:
+        raise HTTPException(status_code=404, detail="Analysis run not found")
+
+    db.delete(run)
+    db.commit()
+    return None
+
+
+# --- CUSTOM SCENARIO ROUTES (FR-21) ---
+# These must also be defined BEFORE /{portfolio_id}
+
+@router.post("/custom-scenarios", response_model=CustomScenarioResponse)
+async def create_custom_scenario(data: CustomScenarioCreate, user: CurrentUser, db: DBSession):
+    new_scenario = CustomScenario(
+        id=uuid.uuid4(),
+        user_id=user["user_id"],
+        title=data.title,
+        description=data.description,
+        start_date=data.start_date,
+        end_date=data.end_date,
+    )
+    db.add(new_scenario)
+    db.commit()
+    db.refresh(new_scenario)
+    return new_scenario
+
+
+@router.get("/custom-scenarios", response_model=List[CustomScenarioResponse])
+async def get_custom_scenarios(user: CurrentUser, db: DBSession):
+    return (
+        db.query(CustomScenario)
+        .filter(CustomScenario.user_id == user["user_id"])
+        .order_by(CustomScenario.created_at.desc())
+        .all()
+    )
+
+
+# --- WILDCARD PORTFOLIO ROUTES ---
+# These must come LAST so static paths above are not swallowed
 
 @router.get("/{portfolio_id}", response_model=PortfolioResponse)
 async def get_portfolio(portfolio_id: str, user: CurrentUser, db: DBSession):
@@ -265,127 +400,3 @@ async def add_holdings(portfolio_id: str, holdings_data: List[HoldingCreate], us
 
     db.commit()
     return {"message": "Success"}
-
-
-# --- ANALYSIS RUN HISTORY ROUTES (FR-13) ---
-
-@router.post("/analysis-runs", response_model=AnalysisRunResponse, status_code=status.HTTP_201_CREATED)
-async def save_analysis_run(run_data: AnalysisRunCreate, user: CurrentUser, db: DBSession):
-    portfolio = (
-        db.query(Portfolio)
-        .filter(
-            Portfolio.id == run_data.portfolio_id,
-            Portfolio.user_id == user["user_id"]
-        )
-        .first()
-    )
-
-    if not portfolio:
-        raise HTTPException(status_code=404, detail="Portfolio not found")
-
-    new_run = AnalysisRun(
-        id=uuid.uuid4(),
-        user_id=user["user_id"],
-        portfolio_id=run_data.portfolio_id,
-        scenario_id=run_data.scenario_id,
-        scenario_name=run_data.scenario_name,
-        start_date=run_data.start_date,
-        end_date=run_data.end_date,
-        vulnerability_score=run_data.vulnerability_score,
-        timeline_view=run_data.timeline_view,
-        notes=run_data.notes,
-    )
-
-    db.add(new_run)
-    db.commit()
-    db.refresh(new_run)
-    return new_run
-
-
-@router.get("/analysis-runs", response_model=List[AnalysisRunResponse])
-async def get_analysis_runs(user: CurrentUser, db: DBSession):
-    runs = (
-        db.query(AnalysisRun)
-        .filter(AnalysisRun.user_id == user["user_id"])
-        .order_by(AnalysisRun.created_at.desc())
-        .all()
-    )
-    return runs
-
-
-@router.get("/analysis-runs/{run_id}", response_model=AnalysisRunResponse)
-async def get_analysis_run(run_id: UUID, user: CurrentUser, db: DBSession):
-    run = (
-        db.query(AnalysisRun)
-        .filter(
-            AnalysisRun.id == run_id,
-            AnalysisRun.user_id == user["user_id"]
-        )
-        .first()
-    )
-
-    if not run:
-        raise HTTPException(status_code=404, detail="Analysis run not found")
-
-    return run
-
-
-@router.delete("/analysis-runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_analysis_run(run_id: UUID, user: CurrentUser, db: DBSession):
-    run = (
-        db.query(AnalysisRun)
-        .filter(
-            AnalysisRun.id == run_id,
-            AnalysisRun.user_id == user["user_id"]
-        )
-        .first()
-    )
-
-    if not run:
-        raise HTTPException(status_code=404, detail="Analysis run not found")
-
-    db.delete(run)
-    db.commit()
-    return None
-
-class CustomScenarioCreate(BaseModel):
-    title: str
-    description: Optional[str] = None
-    start_date: str
-    end_date: str
-
-class CustomScenarioResponse(BaseModel):
-    id: UUID
-    user_id: UUID
-    title: str
-    description: Optional[str]
-    start_date: str
-    end_date: str
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-@router.post("/custom-scenarios", response_model=CustomScenarioResponse)
-async def create_custom_scenario(data: CustomScenarioCreate, user: CurrentUser, db: DBSession):
-    new_scenario = CustomScenario(
-        id=uuid.uuid4(),
-        user_id=user["user_id"],
-        title=data.title,
-        description=data.description,
-        start_date=data.start_date,
-        end_date=data.end_date,
-    )
-    db.add(new_scenario)
-    db.commit()
-    db.refresh(new_scenario)
-    return new_scenario
-
-@router.get("/custom-scenarios", response_model=List[CustomScenarioResponse])
-async def get_custom_scenarios(user: CurrentUser, db: DBSession):
-    return (
-        db.query(CustomScenario)
-        .filter(CustomScenario.user_id == user["user_id"])
-        .order_by(CustomScenario.created_at.desc())
-        .all()
-    )

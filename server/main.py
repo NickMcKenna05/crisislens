@@ -6,7 +6,7 @@ from jose import JWTError
 from database import Base, engine
 import models
 from config import settings
-from routers import portfolios, auth_email, tickers
+from routers import portfolios, auth_email, tickers, news
 
 
 app = FastAPI(
@@ -31,6 +31,7 @@ app.add_middleware(
 app.include_router(portfolios.router)
 app.include_router(auth_email.router)
 app.include_router(tickers.router)
+app.include_router(news.router)
 
 # Global exception handler for JWT errors
 @app.exception_handler(JWTError)

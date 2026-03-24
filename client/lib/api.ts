@@ -247,3 +247,50 @@ export async function fetchCustomScenarios() {
   if (!res.ok) throw new Error("Failed to fetch custom scenarios");
   return res.json();
 }
+
+export type NewsArticle = {
+  title: string;
+  publisher: string;
+  link: string;
+  published_at: number;
+  sentiment: "positive" | "negative" | "neutral";
+  confidence: number;
+  scenario_relevant: boolean;
+}
+
+export type PortfolioNewsResponse = {
+  portfolio_id: string;
+  tickers_analyzed: string[];
+  aggregate: {
+    positive: number;
+    negative: number;
+    neutral: number;
+    total: number;
+    score: number;
+  };
+  by_ticker: Record<string, {
+    articles: NewsArticle[];
+    counts: { positive: number; negative: number; neutral: number };
+  }>;
+};
+
+export async function fetchPortfolioNews(
+  portfolioId: string,
+  scenarioId?: string
+): Promise<PortfolioNewsResponse> {
+  const headers = await getAuthHeaders();
+  const params = new URLSearchParams();
+  if (scenarioId) params.set("scenario_id", scenarioId);
+
+  const res = await fetch(
+    `${API_URL}/news/portfolio/${portfolioId}?${params.toString()}`,
+    { headers }
+  );
+
+  if (res.status === 503) {
+    throw new Error("MODEL_LOADING");
+  }
+
+  if (!res.ok) throw new Error("Failed to fetch news");
+  return res.json();
+}

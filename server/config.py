@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     # Optional: JWKS URL for future migration to asymmetric keys
     SUPABASE_JWKS_URL: str | None = None
     
+    HUGGINGFACE_API_KEY: str
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -1,5 +1,6 @@
 "use client";
 
+import NewsPanel from "@/components/ui/NewsPanel";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -593,6 +594,10 @@ export default function AnalysisDashboardPage() {
             </CardContent>
           </Card>
         </div>
+        <NewsPanel
+          portfolioId={selectedPortfolio}
+          scenarioId={selectedScenarioData.id}
+        />
       </div>
     </div>
   );

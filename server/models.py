@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, ForeignKey, DateTime, Text
+from sqlalchemy import Column, String, Float, ForeignKey, DateTime, Text, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime, UTC
@@ -74,6 +74,8 @@ class AnalysisRun(Base):
     scenario_name = Column(String(255), nullable=False)
     start_date = Column(String(20), nullable=True)
     end_date = Column(String(20), nullable=True)
+    vulnerability_score = Column(Integer, nullable=True)
+    timeline_view = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.now(UTC), nullable=False)
     notes = Column(Text, nullable=True)
 
