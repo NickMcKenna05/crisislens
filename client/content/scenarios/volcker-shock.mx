@@ -1,9 +1,21 @@
 ---
+id: "volcker-shock"
 title: "Volcker Shock (1979–1982)"
+startDate: "1979-08-01"
+endDate: "1982-12-31"
 dateRange: "Aug 1979 – 1982"
 severity: "Critical"
 maxDrawdown: "-27%"
 shortDescription: "The Federal Reserve sharply raised interest rates to combat inflation, causing recession and market stress."
+markers:
+  - date: "1979-08-06"
+    label: "Volcker Appointed Fed Chair"
+  - date: "1979-10-06"
+    label: "Rate Shock Policy Announced"
+  - date: "1981-06-01"
+    label: "Rates Peak"
+  - date: "1982-08-12"
+    label: "Market Bottom / Recovery Begins"
 ---
 
 ### The Crisis: What Happened and Why

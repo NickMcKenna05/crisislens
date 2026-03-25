@@ -1,18 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { fetchPortfolioById } from "@/lib/api"; 
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
+import { 
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip,
+  BarChart, Bar, XAxis, YAxis
+} from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { 
   ArrowLeft, ShieldAlert, Building2, Briefcase, 
-  PieChart as PieIcon, Bot, Loader2, Zap
+  PieChart as PieIcon, Loader2, Zap, ChevronLeft, ChevronRight, BarChart3, Layers
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
-const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4"];
+// Extended professional color palette
+const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#14b8a6", "#f97316", "#6366f1"];
 
 export default function PortfolioDetailPage() {
   const params = useParams();
@@ -21,6 +25,10 @@ export default function PortfolioDetailPage() {
   const [portfolio, setPortfolio] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedStock, setSelectedStock] = useState<any>(null);
+  
+  // Carousel State
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const SLIDES = ["Asset Allocation", "Sector Exposure", "Concentration Risk"];
 
   useEffect(() => {
     async function getDetails() {
@@ -36,6 +44,46 @@ export default function PortfolioDetailPage() {
     if (params.id) getDetails();
   }, [params.id]);
 
+  // --- DATA PROCESSING ---
+  const { totalValue, stockData, sectorData, top5Concentration } = useMemo(() => {
+    if (!portfolio || !portfolio.holdings) {
+      return { totalValue: 0, stockData: [], sectorData: [], top5Concentration: [] };
+    }
+
+    let total = 0;
+    const stockMap: any[] = [];
+    const secMap: Record<string, number> = {};
+
+    portfolio.holdings.forEach((h: any) => {
+      const price = h.current_price || h.avg_price_paid || 0;
+      const val = h.shares * price;
+      total += val;
+
+      stockMap.push({ name: h.ticker, value: val });
+
+      const sector = h.sector || "Other";
+      secMap[sector] = (secMap[sector] || 0) + val;
+    });
+
+    // 1. Stock Data (Sorted largest to smallest)
+    const sortedStocks = stockMap.sort((a, b) => b.value - a.value);
+
+    // 2. Sector Data (Sorted largest to smallest)
+    const sortedSectors = Object.keys(secMap)
+      .map((key) => ({ name: key, value: secMap[key] }))
+      .sort((a, b) => b.value - a.value);
+
+    // 3. Top 5 Concentration
+    const top5 = sortedStocks.slice(0, 5);
+
+    return { 
+      totalValue: total, 
+      stockData: sortedStocks, 
+      sectorData: sortedSectors, 
+      top5Concentration: top5 
+    };
+  }, [portfolio]);
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-50/30">
@@ -46,16 +94,8 @@ export default function PortfolioDetailPage() {
 
   if (!portfolio) return <div className="p-10 text-center text-slate-500">Portfolio not found.</div>;
 
-  const holdings = portfolio.holdings || [];
-  const totalValue = holdings.reduce((sum: number, h: any) => {
-    const price = h.current_price || h.avg_price_paid || 0;
-    return sum + (h.shares * price);
-  }, 0);
-
-  const chartData = holdings.map((h: any) => ({
-    name: h.ticker,
-    value: (h.current_price || h.avg_price_paid) * h.shares
-  }));
+  const nextSlide = () => setCurrentSlide((prev) => (prev + 1) % SLIDES.length);
+  const prevSlide = () => setCurrentSlide((prev) => (prev - 1 + SLIDES.length) % SLIDES.length);
 
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-20 p-6 bg-slate-50/30 min-h-screen">
@@ -87,48 +127,102 @@ export default function PortfolioDetailPage() {
         {/* LEFT COLUMN (8 Cols) */}
         <div className="col-span-12 lg:col-span-8 space-y-8">
           
-          {/* Chart Card */}
+          {/* MULTI-CHART CAROUSEL CARD */}
           <Card className="bg-white border-slate-200 shadow-sm overflow-hidden">
-            <CardHeader className="bg-slate-50/50 border-b border-slate-100 px-8 py-6">
+            <CardHeader className="bg-slate-50/50 border-b border-slate-100 px-8 py-4 flex flex-row items-center justify-between">
               <CardTitle className="text-xs font-black text-slate-400 uppercase tracking-[0.15em] flex items-center gap-2">
-                 <PieIcon size={16} /> Strategy Composition
+                 {currentSlide === 0 && <PieIcon size={16} className="text-blue-500" />}
+                 {currentSlide === 1 && <Layers size={16} className="text-emerald-500" />}
+                 {currentSlide === 2 && <BarChart3 size={16} className="text-amber-500" />}
+                 {SLIDES[currentSlide]}
               </CardTitle>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="icon" className="h-8 w-8 rounded-full border-slate-200 text-slate-500 hover:text-slate-900" onClick={prevSlide}>
+                  <ChevronLeft size={16} />
+                </Button>
+                <div className="text-[10px] font-bold text-slate-400 w-12 text-center">
+                  {currentSlide + 1} / 3
+                </div>
+                <Button variant="outline" size="icon" className="h-8 w-8 rounded-full border-slate-200 text-slate-500 hover:text-slate-900" onClick={nextSlide}>
+                  <ChevronRight size={16} />
+                </Button>
+              </div>
             </CardHeader>
-            <CardContent className="pt-12 pb-8 px-8">
-              <div className="h-[350px]">
+            <CardContent className="pt-10 pb-8 px-8">
+              
+              <div className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={chartData}
-                      innerRadius={90}
-                      outerRadius={130}
-                      paddingAngle={8}
-                      dataKey="value"
-                      stroke="none"
-                    >
-                      {chartData.map((_entry: any, index: number) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} className="hover:opacity-80 transition-opacity outline-none cursor-pointer" />
-                      ))}
-                    </Pie>
-                    <RechartsTooltip 
-                      contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.2)', padding: '16px' }}
-                      formatter={(value: any) => [`$${Number(value).toLocaleString()}`, "Asset Value"]}
-                    />
-                  </PieChart>
+                  
+                  {/* SLIDE 0: Asset Allocation (Stocks) */}
+                  {currentSlide === 0 && (
+                    <PieChart>
+                      <Pie data={stockData} innerRadius={90} outerRadius={130} paddingAngle={4} dataKey="value" stroke="none">
+                        {stockData.map((_entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} className="hover:opacity-80 transition-opacity outline-none cursor-pointer" />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip 
+                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 40px -12px rgba(0, 0, 0, 0.15)' }}
+                        formatter={(value: any, name: any) => [`$${Number(value).toLocaleString()}`, name]}
+                      />
+                    </PieChart>
+                  )}
+
+                  {/* SLIDE 1: Sector Exposure */}
+                  {currentSlide === 1 && (
+                    <PieChart>
+                      <Pie data={sectorData} innerRadius={90} outerRadius={130} paddingAngle={4} dataKey="value" stroke="none">
+                        {sectorData.map((_entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} className="hover:opacity-80 transition-opacity outline-none cursor-pointer" />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip 
+                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 40px -12px rgba(0, 0, 0, 0.15)' }}
+                        formatter={(value: any, name: any) => [`$${Number(value).toLocaleString()}`, name]}
+                      />
+                    </PieChart>
+                  )}
+
+                  {/* SLIDE 2: Top 5 Concentration Bar Chart */}
+                  {currentSlide === 2 && (
+                    <BarChart layout="vertical" data={top5Concentration} margin={{ top: 0, right: 30, left: 40, bottom: 0 }}>
+                      <XAxis type="number" hide />
+                      <YAxis type="category" dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 13, fontWeight: '900', fill: '#475569' }} />
+                      <RechartsTooltip 
+                        cursor={{ fill: '#f8fafc' }}
+                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 40px -12px rgba(0, 0, 0, 0.15)' }}
+                        formatter={(value: any, name: any) => [`$${Number(value).toLocaleString()}`, name]}
+                      />
+                      <Bar dataKey="value" radius={[0, 8, 8, 0]}>
+                        {top5Concentration.map((_entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  )}
+
                 </ResponsiveContainer>
               </div>
               
-              <div className="flex flex-wrap justify-center gap-x-8 gap-y-4 mt-8">
-                {chartData.map((entry: any, index: number) => (
-                  <div key={entry.name} className="flex items-center gap-2 group cursor-default">
-                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
-                    <span className="text-[11px] font-black text-slate-700 uppercase">{entry.name}</span>
-                    <span className="text-[10px] text-slate-400 font-bold">
-                      {((entry.value / totalValue) * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                ))}
-              </div>
+              {/* Dynamic Legend (Hidden on Bar Chart to save space) */}
+              {currentSlide !== 2 && (
+                <div className="flex flex-wrap justify-center gap-x-6 gap-y-3 mt-8">
+                  {(currentSlide === 0 ? stockData : sectorData).slice(0, 8).map((entry: any, index: number) => (
+                    <div key={entry.name} className="flex items-center gap-2 group cursor-default bg-slate-50 px-3 py-1.5 rounded-full border border-slate-100">
+                      <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                      <span className="text-[11px] font-bold text-slate-700 truncate max-w-[120px]">{entry.name}</span>
+                      <span className="text-[10px] text-slate-400 font-black ml-1">
+                        {totalValue > 0 ? ((entry.value / totalValue) * 100).toFixed(1) : 0}%
+                      </span>
+                    </div>
+                  ))}
+                  {(currentSlide === 0 ? stockData : sectorData).length > 8 && (
+                    <div className="flex items-center text-[10px] font-bold text-slate-400 px-3 py-1.5">
+                      + {(currentSlide === 0 ? stockData : sectorData).length - 8} more
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -149,7 +243,7 @@ export default function PortfolioDetailPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {holdings.map((h: any, i: number) => {
+                  {portfolio.holdings.map((h: any, i: number) => {
                     const val = (h.current_price || h.avg_price_paid) * h.shares;
                     const isActive = selectedStock?.ticker === h.ticker;
                     return (
@@ -178,9 +272,9 @@ export default function PortfolioDetailPage() {
           </Card>
         </div>
 
-        {/* RIGHT COLUMN (4 Cols) - THE SCROLL FIX IS HERE */}
+        {/* RIGHT COLUMN (4 Cols) */}
         <div className="col-span-12 lg:col-span-4 h-full">
-          <div className="sticky top-8 space-y-6"> {/* This container is now sticky */}
+          <div className="sticky top-8 space-y-6"> 
             
             {selectedStock ? (
               <Card className="border-blue-200 shadow-2xl bg-white animate-in slide-in-from-bottom-4 duration-500 rounded-[2rem] overflow-hidden border-2">
@@ -218,7 +312,7 @@ export default function PortfolioDetailPage() {
                        CRISIS VULNERABILITY
                     </h4>
                     <p className="text-xs text-amber-900/70 font-bold leading-relaxed relative z-10">
-                      As part of the <strong>{selectedStock.industry}</strong> sector, this asset will be simulated against historical volatility spikes. Higher exposure in {selectedStock.sector} typically correlates with specific drawdown patterns.
+                      As part of the <strong>{selectedStock.industry || "Market"}</strong> sector, this asset will be simulated against historical volatility spikes. Higher exposure in {selectedStock.sector || "this area"} typically correlates with specific drawdown patterns.
                     </p>
                   </div>
                 </CardContent>
@@ -235,7 +329,6 @@ export default function PortfolioDetailPage() {
               </Card>
             )}
 
-            {/* System Status - Now always sits nicely below the Intel card */}
             <Card className="bg-slate-900 text-white border-none shadow-2xl rounded-[2rem] overflow-hidden relative">
               <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/20 blur-[60px] -mr-16 -mt-16" />
               <CardContent className="p-8 relative z-10 space-y-4">
@@ -244,7 +337,7 @@ export default function PortfolioDetailPage() {
                   <h3 className="font-black text-lg tracking-tight uppercase text-[11px]">System Status</h3>
                 </div>
                 <p className="text-xs text-slate-400 leading-relaxed font-bold italic">
-                  "Portfolio mapping complete. Historical benchmarks for {holdings.length} industries are synced. Ready for drawdown projection."
+                  "Portfolio mapping complete. Historical benchmarks for {portfolio.holdings.length} holdings are synced. Ready for drawdown projection."
                 </p>
               </CardContent>
             </Card>

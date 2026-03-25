@@ -294,3 +294,21 @@ export async function fetchPortfolioNews(
   if (!res.ok) throw new Error("Failed to fetch news");
   return res.json();
 }
+
+export async function fetchScenarioAnalysis(
+  portfolioId: string,
+  start: string,
+  end: string,
+  scenario: string
+) {
+  const headers = await getAuthHeaders();
+  const params = new URLSearchParams({ start, end, scenario });
+
+  const res = await fetch(
+    `${API_URL}/portfolios/${portfolioId}/analyze?${params.toString()}`,
+    { headers }
+  );
+
+  if (!res.ok) throw new Error("Failed to fetch scenario analysis");
+  return res.json();
+}
