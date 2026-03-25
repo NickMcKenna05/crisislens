@@ -220,9 +220,8 @@ export default function PerformanceChart({
                 color: "#fff",
               }}
               itemStyle={{ color: "#fff" }}
-              formatter={(value: any) => [Number(value || 0).toFixed(2), "Index Value"]}
+              formatter={(value: any, name: any) => [Number(value || 0).toFixed(2), name]}
             />
-
             <Area
               type="monotone"
               dataKey="market"

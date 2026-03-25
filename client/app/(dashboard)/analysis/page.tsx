@@ -30,6 +30,7 @@ export default function AnalysisDashboardPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // URL Parameters
   const portfolioIdFromUrl = searchParams.get("portfolioId") || "";
   const scenarioFromUrl = searchParams.get("scenario") || "covid-19";
   const startFromUrl = searchParams.get("start") || "";
@@ -37,20 +38,30 @@ export default function AnalysisDashboardPage() {
   const customNameFromUrl = searchParams.get("name") || "";
   const customDescriptionFromUrl = searchParams.get("description") || "";
 
+  // Core Data State
   const [portfolios, setPortfolios] = useState<any[]>([]);
   const [runHistory, setRunHistory] = useState<AnalysisRun[]>([]);
   const [scenarios, setScenarios] = useState<any[]>([]); 
   
+  // Active UI State
   const [selectedPortfolio, setSelectedPortfolio] = useState(portfolioIdFromUrl);
   const [selectedScenario, setSelectedScenario] = useState(scenarioFromUrl);
   const [isZoomed, setIsZoomed] = useState(false);
-  const [isSavingRun, setIsSavingRun] = useState(false);
   const [isLoadingRuns, setIsLoadingRuns] = useState(false);
-  
   const [metrics, setMetrics] = useState<any>(null);
-  const [isScoreModalOpen, setIsScoreModalOpen] = useState(false);
+  const [activeSavedRun, setActiveSavedRun] = useState<AnalysisRun | null>(null);
 
-  // States for the Custom Scenario Builder
+  // Modals State
+  const [isScoreModalOpen, setIsScoreModalOpen] = useState(false);
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [isSavingRun, setIsSavingRun] = useState(false);
+
+  // Save Modal Form State
+  const [runNameInput, setRunNameInput] = useState("");
+  const [savePortfolioId, setSavePortfolioId] = useState("");
+  const [saveScenarioId, setSaveScenarioId] = useState("");
+
+  // Custom Scenario Builder State
   const [customScenarioName, setCustomScenarioName] = useState(customNameFromUrl);
   const [customScenarioDescription, setCustomScenarioDescription] = useState(customDescriptionFromUrl);
   const [customStartDate, setCustomStartDate] = useState(startFromUrl);
@@ -61,7 +72,6 @@ export default function AnalysisDashboardPage() {
   }, [portfolios, selectedPortfolio]);
 
   const selectedScenarioData = useMemo(() => {
-    // 1. If the user selects "custom", feed the live state into the chart
     if (selectedScenario === "custom") {
       return {
         id: "custom",
@@ -72,8 +82,6 @@ export default function AnalysisDashboardPage() {
         markers: [] 
       };
     }
-
-    // 2. Otherwise, find the MDX scenario
     const found = scenarios.find((s) => s.id === selectedScenario);
     if (found) return found;
 
@@ -121,6 +129,9 @@ export default function AnalysisDashboardPage() {
         return;
       }
     }
+    
+    // Clear active saved run since we are doing a fresh simulation
+    setActiveSavedRun(null);
 
     const params = new URLSearchParams();
     if (selectedPortfolio) params.set("portfolioId", selectedPortfolio);
@@ -137,29 +148,85 @@ export default function AnalysisDashboardPage() {
     router.push(`/analysis?${params.toString()}`);
   }
 
-  async function handleSaveRun() {
+  // --- SAVE RUN MODAL LOGIC ---
+  function openSaveModal() {
     if (!selectedPortfolio || !metrics) {
       alert("Please run a simulation first before saving.");
       return;
     }
+    // Pre-fill the modal with current state
+    setSavePortfolioId(selectedPortfolio);
+    setSaveScenarioId(selectedScenario);
+    setRunNameInput(`${selectedPortfolioObj?.name || 'Portfolio'} - ${selectedScenarioData.label} Test`);
+    setIsSaveModalOpen(true);
+  }
+
+  async function confirmSaveRun() {
+    if (!runNameInput) {
+      alert("Please provide a name for this run.");
+      return;
+    }
+
     try {
       setIsSavingRun(true);
+      
+      // Determine the scenario name based on what they selected in the modal
+      let finalScenarioName = selectedScenarioData.label;
+      if (saveScenarioId !== selectedScenario) {
+         const found = scenarios.find(s => s.id === saveScenarioId);
+         if (found) finalScenarioName = found.label;
+      }
+
       const savedRun = await saveAnalysisRun({
-        portfolio_id: selectedPortfolio,
-        scenario_id: selectedScenarioData.id,
-        scenario_name: selectedScenarioData.label,
+        portfolio_id: savePortfolioId,
+        scenario_id: saveScenarioId,
+        scenario_name: finalScenarioName,
         start_date: selectedScenarioData.startDate,
         end_date: selectedScenarioData.endDate,
         vulnerability_score: metrics.vulnerabilityScore,
         timeline_view: isZoomed ? "crash" : "full",
-        notes: `Portfolio Beta: ${metrics.portfolioBeta}`,
+        notes: runNameInput, // We use 'notes' to store the custom Run Name
       });
+      
       setRunHistory((prev) => [savedRun, ...prev]);
+      setIsSaveModalOpen(false);
     } catch (error: any) {
       alert("Failed to save analysis run.");
     } finally {
       setIsSavingRun(false);
     }
+  }
+
+  async function handleDeleteRun(runId: string) {
+    if (!confirm("Are you sure you want to delete this saved run?")) return;
+    try {
+      await deleteAnalysisRun(runId);
+      setRunHistory((prev) => prev.filter((r) => r.id !== runId));
+      if (activeSavedRun?.id === runId) setActiveSavedRun(null);
+    } catch (error) {
+      console.error("Failed to delete run", error);
+    }
+  }
+
+  // --- LOAD SAVED RUN LOGIC ---
+  function loadSavedRun(run: AnalysisRun) {
+    setActiveSavedRun(run);
+    setSelectedPortfolio(run.portfolio_id);
+    setSelectedScenario(run.scenario_id);
+    
+    if (run.scenario_id === "custom") {
+      setCustomStartDate(run.start_date || "");
+      setCustomEndDate(run.end_date || "");
+      setCustomScenarioName(run.scenario_name || "");
+    }
+
+    // Update URL to trigger the chart re-fetch
+    const params = new URLSearchParams();
+    params.set("portfolioId", run.portfolio_id);
+    params.set("scenario", run.scenario_id);
+    if (run.start_date) params.set("start", run.start_date);
+    if (run.end_date) params.set("end", run.end_date);
+    router.push(`/analysis?${params.toString()}`);
   }
 
   return (
@@ -233,8 +300,8 @@ export default function AnalysisDashboardPage() {
             <Button className="w-full bg-blue-600 hover:bg-blue-700 shadow-lg" onClick={handleUpdateSimulation}>
               Update Simulation
             </Button>
-            <Button className="w-full" variant="outline" onClick={handleSaveRun} disabled={!selectedPortfolio || isSavingRun || !metrics}>
-              <Save className="mr-2 h-4 w-4" /> {isSavingRun ? "Saving..." : "Save This Run"}
+            <Button className="w-full" variant="outline" onClick={openSaveModal} disabled={!selectedPortfolio || !metrics}>
+              <Save className="mr-2 h-4 w-4" /> Save This Run
             </Button>
           </CardContent>
         </Card>
@@ -260,6 +327,61 @@ export default function AnalysisDashboardPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* RUN HISTORY CARD */}
+        {runHistory.length > 0 && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <History size={14} /> Saved Runs
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 max-h-[350px] overflow-y-auto">
+              {runHistory.map((run) => {
+                const isCustom = run.scenario_id === "custom";
+                const crisisName = isCustom ? `${run.start_date} to ${run.end_date}` : run.scenario_name;
+                const portName = portfolios.find(p => p.id === run.portfolio_id)?.name || "Unknown Portfolio";
+                const isActive = activeSavedRun?.id === run.id;
+
+                return (
+                  <div 
+                    key={run.id} 
+                    onClick={() => loadSavedRun(run)}
+                    className={`flex flex-col p-3 rounded-lg border transition-colors group cursor-pointer ${isActive ? 'bg-blue-50 border-blue-300 shadow-inner' : 'border-slate-100 bg-slate-50 hover:border-blue-200'}`}
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-sm font-bold text-slate-800 pr-2 leading-tight">
+                        {run.notes || "Unnamed Run"}
+                      </span>
+                      <span className={`text-sm font-black ${run.vulnerability_score > 50 ? 'text-red-500' : 'text-green-500'}`}>
+                        {run.vulnerability_score}
+                      </span>
+                    </div>
+                    
+                    <div className="text-[10px] text-slate-500 space-y-0.5 mb-2">
+                      <p><span className="font-semibold text-slate-400">Portfolio:</span> {portName}</p>
+                      <p><span className="font-semibold text-slate-400">Crisis:</span> {crisisName}</p>
+                    </div>
+
+                    <div className="flex justify-between items-center text-[10px] text-slate-400 pt-2 border-t border-slate-200/60 mt-auto">
+                      <span>{new Date(run.created_at).toLocaleDateString()}</span>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteRun(run.id);
+                        }} 
+                        className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
+
       </div>
 
       <div className="col-span-12 md:col-span-9 flex flex-col gap-6">
@@ -267,7 +389,7 @@ export default function AnalysisDashboardPage() {
           <CardHeader className="flex flex-row items-center justify-between border-b">
             <CardTitle className="capitalize flex items-center gap-2">
               <ShieldAlert size={20} className={metrics?.vulnerabilityScore > 50 ? "text-red-500" : "text-blue-500"} />
-              {selectedScenarioData.label} Impact
+              {activeSavedRun ? `Saved Run: "${activeSavedRun.notes || activeSavedRun.scenario_name}"` : `${selectedScenarioData.label} Impact`}
             </CardTitle>
             <div className="flex gap-2">
                <Button variant={!isZoomed ? "secondary" : "ghost"} size="sm" onClick={() => setIsZoomed(false)}>Context</Button>
@@ -332,6 +454,72 @@ export default function AnalysisDashboardPage() {
           scenarioId={selectedScenarioData.id}
         />
       </div>
+
+      {/* --- SAVE RUN CONFIGURATION MODAL --- */}
+      {isSaveModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 relative">
+            <button 
+              onClick={() => setIsSaveModalOpen(false)} 
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-800 transition-colors"
+            >
+              <X size={20} />
+            </button>
+            
+            <h2 className="text-xl font-bold text-slate-900 mb-1">Save Analysis Run</h2>
+            <p className="text-sm text-slate-500 mb-6">Verify your selections and name this simulation so you can review it later.</p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-bold uppercase text-slate-500">Run Name</label>
+                <input
+                  type="text"
+                  value={runNameInput}
+                  onChange={(e) => setRunNameInput(e.target.value)}
+                  className="w-full mt-1 p-2 border rounded-md text-sm bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="e.g. My Tech Portfolio against COVID"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase text-slate-500">Portfolio Selected</label>
+                <select 
+                  value={savePortfolioId} 
+                  onChange={(e) => setSavePortfolioId(e.target.value)} 
+                  className="w-full mt-1 p-2 border rounded-md text-sm bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {portfolios.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase text-slate-500">Crisis Selected</label>
+                <select 
+                  value={saveScenarioId} 
+                  onChange={(e) => setSaveScenarioId(e.target.value)} 
+                  className="w-full mt-1 p-2 border rounded-md text-sm bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {scenarios.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                  <option value="custom">⚙️ Custom Date Range</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-8 flex gap-3">
+              <Button variant="outline" className="flex-1" onClick={() => setIsSaveModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button 
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" 
+                onClick={confirmSaveRun}
+                disabled={isSavingRun || !runNameInput}
+              >
+                {isSavingRun ? "Saving..." : "Confirm Save"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- VULNERABILITY SCORE EXPLANATION MODAL --- */}
       {isScoreModalOpen && (
