@@ -759,7 +759,6 @@ async def analyze_portfolio_crisis(
     else:
         scenario_betas = CRISIS_BETAS.get(scenario, {})
 
-    scenario_betas = CRISIS_BETAS.get(scenario, {})
     print(f"Debugging {scenario.upper()}")
     print(f"1. Did we find the scenario dict? {'YES' if scenario_betas else 'NO (Betas are empty)'}")
     print(f"2. Number of betas loaded: {len(scenario_betas)}")
