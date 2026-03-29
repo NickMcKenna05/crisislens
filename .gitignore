@@ -1,0 +1,13 @@
+# Windows reserved device name accidentally created
+nul
+
+# Zip archives
+client.zip
+server.zip
+
+# Virtual environments
+venv/
+server/venv/
+
+# Claude settings
+.claude/

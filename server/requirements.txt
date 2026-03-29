@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pandas
+numpy
+yfinance
+sqlalchemy
+psycopg2-binary
+python-dotenv
+requests
+openai
+httpx
+pydantic
+python-jose[cryptography]
+pydantic-settings
