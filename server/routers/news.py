@@ -75,7 +75,7 @@ def parse_articles(raw_news: list, limit: int = 10) -> list:
 async def analyze_sentiment_single(text: str) -> list:
     headers = {"Authorization": f"Bearer {settings.HUGGINGFACE_API_KEY}"}
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=90.0) as client:
         response = await client.post(
             HF_API_URL,
             headers=headers,
@@ -135,63 +135,71 @@ async def get_portfolio_news(
     by_ticker = {}
     total_counts = {"positive": 0, "negative": 0, "neutral": 0}
 
+    # Step 1: fetch all articles for all tickers (fast, no HuggingFace yet)
+    ticker_articles = {}
     for ticker in tickers:
         try:
             yf_ticker = yf.Ticker(ticker)
             raw_news = yf_ticker.news or []
-            articles = parse_articles(raw_news, limit=8)
-
-            if not articles:
-                by_ticker[ticker] = {"articles": [], "counts": {"positive": 0, "negative": 0, "neutral": 0}}
-                continue
-
-            # Run all sentiment calls for this ticker concurrently
-            sentiment_results = await asyncio.gather(
-                *[analyze_sentiment_single(a["sentiment_text"]) for a in articles],
-                return_exceptions=True
-            )
-
-            enriched = []
-            ticker_counts = {"positive": 0, "negative": 0, "neutral": 0}
-
-            for i, article in enumerate(articles):
-                raw_sentiment = sentiment_results[i]
-
-                # Skip if this individual call errored
-                if isinstance(raw_sentiment, Exception):
-                    top = {"label": "neutral", "score": 0.0}
-                else:
-                    top = max(raw_sentiment, key=lambda x: x["score"]) if raw_sentiment else {"label": "neutral", "score": 0.0}
-
-                label = top["label"].lower()
-
-                enriched.append({
-                    **article,
-                    "sentiment": label,
-                    "confidence": round(top["score"] * 100, 1),
-                    "scenario_relevant": is_scenario_relevant(article["title"], scenario_id),
-                })
-
-                if label in ticker_counts:
-                    ticker_counts[label] += 1
-
-            by_ticker[ticker] = {"articles": enriched, "counts": ticker_counts}
-
-            for key in total_counts:
-                total_counts[key] += ticker_counts[key]
-
-        except HTTPException as e:
-            if e.status_code == 503:
-                raise
-            print(f"HuggingFace error for {ticker}: {e.detail}")
-            by_ticker[ticker] = {"articles": [], "counts": {"positive": 0, "negative": 0, "neutral": 0}}
+            ticker_articles[ticker] = parse_articles(raw_news, limit=8)
         except Exception as e:
-            print(f"News error for {ticker}: {e}")
-            by_ticker[ticker] = {"articles": [], "counts": {"positive": 0, "negative": 0, "neutral": 0}}
+            print(f"News fetch error for {ticker}: {e}")
+            ticker_articles[ticker] = []
 
+    # Step 2: build flat list of all articles across all tickers
+    all_pairs = [
+        (ticker, article)
+        for ticker in tickers
+        for article in ticker_articles.get(ticker, [])
+    ]
+
+    # Step 3: fire ALL sentiment calls at once (one gather instead of per-ticker loops)
+    if all_pairs:
+        sentiment_results = await asyncio.gather(
+            *[analyze_sentiment_single(article["sentiment_text"]) for _, article in all_pairs],
+            return_exceptions=True
+        )
+    else:
+        sentiment_results = []
+
+    # Step 4: map results back to tickers
+    result_index = 0
+    for ticker in tickers:
+        articles = ticker_articles.get(ticker, [])
+        if not articles:
+            by_ticker[ticker] = {"articles": [], "counts": {"positive": 0, "negative": 0, "neutral": 0}}
+            continue
+
+        ticker_counts = {"positive": 0, "negative": 0, "neutral": 0}
+        enriched = []
+
+        for article in articles:
+            raw_sentiment = sentiment_results[result_index]
+            result_index += 1
+
+            if isinstance(raw_sentiment, Exception):
+                top = {"label": "neutral", "score": 0.0}
+            else:
+                top = max(raw_sentiment, key=lambda x: x["score"]) if raw_sentiment else {"label": "neutral", "score": 0.0}
+
+            label = top["label"].lower()
+            enriched.append({
+                **article,
+                "sentiment": label,
+                "confidence": round(top["score"] * 100, 1),
+                "scenario_relevant": is_scenario_relevant(article["title"], scenario_id),
+            })
+
+            if label in ticker_counts:
+                ticker_counts[label] += 1
+
+        by_ticker[ticker] = {"articles": enriched, "counts": ticker_counts}
+        for key in total_counts:
+            total_counts[key] += ticker_counts[key]
+            
     total = sum(total_counts.values())
     score = round((total_counts["positive"] - total_counts["negative"]) / total * 100) if total > 0 else 0
-
+            
     return {
         "portfolio_id": portfolio_id,
         "tickers_analyzed": tickers,

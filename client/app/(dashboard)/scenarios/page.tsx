@@ -1,5 +1,5 @@
-import Link from 'next/link';
-import { getAllScenarios } from '@/lib/scenarios';
+import Link from "next/link";
+import { getAllScenarios } from "@/lib/scenarios";
 
 export default function ScenariosPage() {
   const scenarios = getAllScenarios();
@@ -21,18 +21,22 @@ export default function ScenariosPage() {
                 key={scenario.id}
                 className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm"
               >
-                <h2 className="mb-2 text-2xl font-semibold">{scenario.title}</h2>
+                <h2 className="mb-2 text-2xl font-semibold">
+                  {scenario.title || scenario.label || scenario.id}
+                </h2>
 
                 <p className="mb-4 text-sm text-gray-600">
-                  {scenario.description}
+                  {scenario.description || "Historical crisis scenario for stress testing."}
                 </p>
 
                 <div className="mb-4 space-y-1 text-sm text-gray-700">
                   <p>
-                    <span className="font-medium">Start:</span> {scenario.startDate}
+                    <span className="font-medium">Start:</span>{" "}
+                    {scenario.startDate || "N/A"}
                   </p>
                   <p>
-                    <span className="font-medium">End:</span> {scenario.endDate}
+                    <span className="font-medium">End:</span>{" "}
+                    {scenario.endDate || "N/A"}
                   </p>
 
                   {scenario.severity && (
@@ -41,9 +45,9 @@ export default function ScenariosPage() {
                     </p>
                   )}
 
-                  {scenario.maxDrawdown !== undefined && (
+                  {scenario.maxDrawdown !== undefined && scenario.maxDrawdown !== "" && (
                     <p>
-                      <span className="font-medium">Max Drawdown:</span>{' '}
+                      <span className="font-medium">Max Drawdown:</span>{" "}
                       {scenario.maxDrawdown}
                     </p>
                   )}
@@ -58,7 +62,7 @@ export default function ScenariosPage() {
                   </Link>
 
                   <Link
-                    href={`/analysis?scenario=${scenario.id}&start=${scenario.startDate}&end=${scenario.endDate}`}
+                    href={`/analysis?scenario=${scenario.id}&start=${scenario.startDate || ""}&end=${scenario.endDate || ""}`}
                     className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:opacity-90"
                   >
                     Simulate This Crisis

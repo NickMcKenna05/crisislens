@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import {
   ResponsiveContainer,
@@ -16,6 +16,12 @@ import { Button } from "@/components/ui/button";
 import { Image as ImageIcon, Table, Loader2 } from "lucide-react";
 import { fetchScenarioAnalysis } from "@/lib/api";
 
+type ChartPoint = {
+  date: string;
+  portfolio: number;
+  market: number;
+};
+
 interface PerformanceChartProps {
   scenarioId: string;
   isZoomed: boolean;
@@ -25,13 +31,13 @@ interface PerformanceChartProps {
   portfolioName?: string;
   onMetricsUpdate?: (metrics: any) => void;
   markers?: { date: string; label: string }[];
-}
 
-type ChartPoint = {
-  date: string;
-  portfolio: number;
-  market: number;
-};
+  // NEW OPTIONAL PROPS
+  // If provided, component will use these instead of fetching internally
+  data?: ChartPoint[];
+  isLoading?: boolean;
+  error?: string | null;
+}
 
 export default function PerformanceChart({
   scenarioId,
@@ -41,59 +47,81 @@ export default function PerformanceChart({
   portfolioId,
   portfolioName,
   onMetricsUpdate,
-  markers = [], 
+  markers = [],
+
+  data: externalData,
+  isLoading: externalLoading,
+  error: externalError,
 }: PerformanceChartProps) {
   const chartRef = useRef<HTMLDivElement>(null);
-  
-  const [data, setData] = useState<ChartPoint[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
+
+  const [internalData, setInternalData] = useState<ChartPoint[]>([]);
+  const [internalLoading, setInternalLoading] = useState(false);
+  const [internalError, setInternalError] = useState("");
+
+  const hasExternalControl = externalData !== undefined || externalLoading !== undefined || externalError !== undefined;
 
   useEffect(() => {
     async function loadAnalysis() {
+      // If parent is controlling the chart, skip old fetch logic
+      if (hasExternalControl) return;
       if (!portfolioId || !startDate || !endDate || !scenarioId) return;
 
       try {
-        setIsLoading(true);
-        setError("");
-        
+        setInternalLoading(true);
+        setInternalError("");
+
         const result = await fetchScenarioAnalysis(portfolioId, startDate, endDate, scenarioId);
-        
+
         if (result && Array.isArray(result.data)) {
-            setData(result.data);
+          setInternalData(result.data);
         } else {
-            setData(Array.isArray(result) ? result : []);
+          setInternalData(Array.isArray(result) ? result : []);
         }
 
         if (onMetricsUpdate && result.metrics) {
-            onMetricsUpdate(result.metrics);
+          onMetricsUpdate(result.metrics);
         }
-
-      } catch (err: any) {
+      } catch (err) {
         console.error("Chart fetch error:", err);
-        setError("Failed to load historical data for this scenario.");
+        setInternalError("Failed to load historical data for this scenario.");
       } finally {
-        setIsLoading(false);
+        setInternalLoading(false);
       }
     }
 
     loadAnalysis();
-  }, [portfolioId, startDate, endDate, scenarioId, onMetricsUpdate]);
+  }, [
+    portfolioId,
+    startDate,
+    endDate,
+    scenarioId,
+    onMetricsUpdate,
+    hasExternalControl,
+  ]);
+
+  const resolvedData = useMemo<ChartPoint[]>(() => {
+    if (externalData !== undefined) return externalData;
+    return internalData;
+  }, [externalData, internalData]);
+
+  const resolvedLoading = externalLoading !== undefined ? externalLoading : internalLoading;
+  const resolvedError = externalError !== undefined ? externalError ?? "" : internalError;
 
   const displayData = useMemo<ChartPoint[]>(() => {
-    if (!Array.isArray(data) || data.length === 0) return [];
-    
-    if (!isZoomed) return data;
-    
-    const quarterLength = Math.floor(data.length / 4);
-    return data.slice(quarterLength, data.length - quarterLength);
-  }, [data, isZoomed]);
+    if (!Array.isArray(resolvedData) || resolvedData.length === 0) return [];
+
+    if (!isZoomed) return resolvedData;
+
+    const quarterLength = Math.floor(resolvedData.length / 4);
+    return resolvedData.slice(quarterLength, resolvedData.length - quarterLength);
+  }, [resolvedData, isZoomed]);
 
   function exportCSV() {
-    if (!Array.isArray(displayData)) return;
-    
+    if (!Array.isArray(displayData) || displayData.length === 0) return;
+
     const headers = ["Date", "Portfolio", "Market"];
-    const rows = displayData.map((point: ChartPoint) => [point.date, point.portfolio, point.market]);
+    const rows = displayData.map((point) => [point.date, point.portfolio, point.market]);
     const csv = [headers, ...rows].map((row) => row.join(",")).join("\n");
 
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -127,7 +155,7 @@ export default function PerformanceChart({
     }
   }
 
-  if (isLoading) {
+  if (resolvedLoading) {
     return (
       <div className="w-full h-[450px] flex flex-col items-center justify-center text-slate-400 bg-slate-50 rounded-xl border border-slate-100">
         <Loader2 className="h-8 w-8 animate-spin mb-4 text-blue-500" />
@@ -136,10 +164,10 @@ export default function PerformanceChart({
     );
   }
 
-  if (error) {
+  if (resolvedError) {
     return (
       <div className="w-full h-[450px] flex items-center justify-center text-red-500 bg-red-50 rounded-xl border border-red-100 px-6 text-center">
-        <p>{error}</p>
+        <p>{resolvedError}</p>
       </div>
     );
   }
@@ -148,7 +176,9 @@ export default function PerformanceChart({
     return (
       <div className="w-full h-[450px] flex flex-col items-center justify-center text-slate-400 bg-slate-50 rounded-xl border border-slate-100 text-center px-6">
         <p>No historical data available for this timeline.</p>
-        <p className="text-xs mt-2">Note: Some stocks in this portfolio may not have existed during this crisis.</p>
+        <p className="text-xs mt-2">
+          Note: Some stocks in this portfolio may not have existed during this crisis.
+        </p>
       </div>
     );
   }
@@ -174,7 +204,7 @@ export default function PerformanceChart({
         </div>
         <div>
           <span className="font-medium text-slate-800">Portfolio:</span>{" "}
-          {portfolioName || "Not selected"} 
+          {portfolioName || "Not selected"}
         </div>
         <div>
           <span className="font-medium text-slate-800">Window:</span>{" "}
@@ -208,7 +238,7 @@ export default function PerformanceChart({
               fontSize={11}
               tickLine={false}
               axisLine={false}
-              domain={['auto', 'auto']}
+              domain={["auto", "auto"]}
               tickFormatter={(value) => `${value}`}
             />
 
@@ -222,6 +252,7 @@ export default function PerformanceChart({
               itemStyle={{ color: "#fff" }}
               formatter={(value: any, name: any) => [Number(value || 0).toFixed(2), name]}
             />
+
             <Area
               type="monotone"
               dataKey="market"
@@ -243,13 +274,10 @@ export default function PerformanceChart({
               animationDuration={1500}
             />
 
-            {/* SMART MARKERS: 3-Tier Stagger + Edge Detection */}
             {markers.map((marker, index) => {
-              // 1. Create a 3-tier waterfall (0, 20, 40) for dense clusters
               const staggerLevel = index % 3;
               const verticalPush = staggerLevel * 20;
 
-              // 2. Prevent right-edge clipping: If it's the last marker, anchor it to the left side of the line
               const isLastMarker = index === markers.length - 1;
               const textPosition = isLastMarker ? "insideTopRight" : "insideTopLeft";
               const horizontalPush = isLastMarker ? -5 : 5;
@@ -268,7 +296,7 @@ export default function PerformanceChart({
                     fontSize: 11,
                     fontWeight: 600,
                     dy: verticalPush,
-                    dx: horizontalPush
+                    dx: horizontalPush,
                   }}
                 />
               );
@@ -301,13 +329,14 @@ export default function PerformanceChart({
             </tr>
           </thead>
           <tbody>
-            {Array.isArray(displayData) && displayData.map((point: ChartPoint) => (
-              <tr key={point.date} className="border-t">
-                <td className="px-4 py-2">{point.date}</td>
-                <td className="px-4 py-2 font-medium">{point.portfolio.toFixed(2)}</td>
-                <td className="px-4 py-2 text-slate-500">{point.market.toFixed(2)}</td>
-              </tr>
-            ))}
+            {Array.isArray(displayData) &&
+              displayData.map((point) => (
+                <tr key={point.date} className="border-t">
+                  <td className="px-4 py-2">{point.date}</td>
+                  <td className="px-4 py-2 font-medium">{point.portfolio.toFixed(2)}</td>
+                  <td className="px-4 py-2 text-slate-500">{point.market.toFixed(2)}</td>
+                </tr>
+              ))}
           </tbody>
         </table>
       </div>

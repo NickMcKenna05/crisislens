@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { LayoutDashboard, PieChart, Newspaper, BookOpen, Activity, LogOut } from "lucide-react";
+import { LayoutDashboard, PieChart, BookOpen, Activity, LogOut } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { signOut } from "@/lib/auth";
 
@@ -25,7 +25,6 @@ export default function Navbar() {
         <Link href="/analysis" className="flex items-center gap-2 hover:text-blue-600"><PieChart size={18}/> Analysis</Link>
         <Link href="/scenarios" className="flex items-center gap-2 hover:text-blue-600"><BookOpen size={18}/> Scenarios</Link>
         <Link href="/simulation" className="flex items-center gap-2 hover:text-blue-600"><Activity size={18}/> Simulation</Link>
-        <Link href="/news" className="flex items-center gap-2 hover:text-blue-600"><Newspaper size={18}/> News</Link>
       </div>
       <div className="flex items-center gap-4">
         {loading ? (

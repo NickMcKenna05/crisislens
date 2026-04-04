@@ -5,11 +5,17 @@ from typing import List, Optional
 from uuid import UUID
 import uuid
 from datetime import datetime
+
 import yfinance as yf
 import pandas as pd
 
 from dependencies import CurrentUser, DBSession
 from models import Portfolio, Holding, AnalysisRun, GlobalTicker, CustomScenario
+from services.risk import (
+    calculate_risk_metrics,
+    calculate_sector_attribution,
+    calculate_risk_score,
+)
 
 router = APIRouter(
     prefix="/portfolios",
@@ -20,7 +26,7 @@ router = APIRouter(
 # GLOBAL CONSTANTS
 # ==========================================
 
-# The Rosetta Stone: Translate Yahoo Finance terms to our Dictionary terms
+# Translate Yahoo Finance sector terms to your app's preferred terms
 TERM_MAP = {
     "Financial Services": "Financials",
     "Consumer Cyclical": "Consumer Discretionary",
@@ -28,11 +34,10 @@ TERM_MAP = {
     "Basic Materials": "Materials"
 }
 
-# CRISIS BETAS - METHODOLOGY NOTES
-# Values derived from Academic regression studies, CRSP/Compustat, and Fed data.
-# 1.0 = moved with market | >1.0 = amplified loss | <1.0 = defensive
-# CRISIS BETAS - METHODOLOGY NOTES
-# 1.0 = moved with market | >1.0 = amplified loss | <1.0 = defensive
+# CRISIS BETAS
+# 1.0 = moved with market
+# >1.0 = amplified loss
+# <1.0 = defensive
 CRISIS_BETAS = {
     "covid-19": {
         "Technology": 0.96, "Financials": 1.23, "Energy": 1.77, "Healthcare": 0.76,
@@ -84,10 +89,6 @@ CRISIS_BETAS = {
         "Gold Miners": 0.70, "Steel": 1.05, "Oil & Gas Exploration": 0.90, "Oil Services": 0.95,
         "Default": 1.0
     },
-    
-    # ---------------------------------------------------------
-    # SYNced ID NAMES FROM YOUR MDX LOGS:
-    # ---------------------------------------------------------
     "rate-hike-2022": {
         "Technology": 1.32, "Financials": 1.06, "Energy": 1.49, "Healthcare": 0.63,
         "Consumer Staples": 0.69, "Consumer Discretionary": 1.42, "Industrials": 0.89,
@@ -173,15 +174,11 @@ CRISIS_BETAS = {
         "Transportation": 1.15, "Metals & Mining": 1.10, "Gold Miners": 0.60, "Steel": 1.20,
         "Oil & Gas Exploration": 0.75, "Oil Services": 0.80, "Default": 1.0
     },
-
-    # ---------------------------------------------------------
-    # BRAND NEW SCENARIOS YOU ADDED:
-    # ---------------------------------------------------------
     "flash-crash": {
         "Technology": 1.45, "Financials": 1.20, "Energy": 0.95, "Healthcare": 0.85,
         "Consumer Staples": 0.65, "Consumer Discretionary": 1.30, "Industrials": 1.10,
         "Utilities": 0.55, "Materials": 1.15, "Real Estate": 0.90, "Communication Services": 1.25,
-        "Semiconductors": 1.50, "Software": 1.40, "Internet": 1.55, "Regional Banks": 1.10, 
+        "Semiconductors": 1.50, "Software": 1.40, "Internet": 1.55, "Regional Banks": 1.10,
         "Banks": 1.15, "Insurance": 0.90, "Default": 1.0
     },
     "gamestop-squeeze": {
@@ -217,16 +214,20 @@ CRISIS_BETAS = {
     }
 }
 
-# --- SCHEMAS ---
+# ==========================================
+# SCHEMAS
+# ==========================================
 
 class HoldingCreate(BaseModel):
     ticker: str
     shares: float
     avg_price_paid: Optional[float] = None
 
+
 class PortfolioCreate(BaseModel):
     name: str
     description: Optional[str] = None
+
 
 class HoldingResponse(BaseModel):
     id: UUID
@@ -240,6 +241,7 @@ class HoldingResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class PortfolioResponse(BaseModel):
     id: UUID
     user_id: UUID
@@ -251,6 +253,7 @@ class PortfolioResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class AnalysisRunCreate(BaseModel):
     portfolio_id: UUID
     scenario_id: str
@@ -260,6 +263,7 @@ class AnalysisRunCreate(BaseModel):
     vulnerability_score: Optional[int] = None
     timeline_view: Optional[str] = None
     notes: Optional[str] = None
+
 
 class AnalysisRunResponse(BaseModel):
     id: UUID
@@ -277,11 +281,13 @@ class AnalysisRunResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class CustomScenarioCreate(BaseModel):
     title: str
     description: Optional[str] = None
     start_date: str
     end_date: str
+
 
 class CustomScenarioResponse(BaseModel):
     id: UUID
@@ -295,13 +301,102 @@ class CustomScenarioResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 # ==========================================
-# 1. STATIC ROUTES
+# HELPERS
+# ==========================================
+
+def normalize_term(term: Optional[str]) -> str:
+    if not term:
+        return "Default"
+    return TERM_MAP.get(term, term)
+
+
+def build_price_frame(raw_close, tickers: List[str]) -> pd.DataFrame:
+    """
+    Normalize yfinance close output into a DataFrame with ticker columns.
+    """
+    if raw_close is None or len(tickers) == 0:
+        return pd.DataFrame()
+
+    if isinstance(raw_close, pd.Series):
+        if len(tickers) == 1:
+            return raw_close.to_frame(name=tickers[0])
+        return raw_close.to_frame()
+
+    if isinstance(raw_close, pd.DataFrame):
+        if len(tickers) == 1 and tickers[0] not in raw_close.columns and raw_close.shape[1] == 1:
+            raw_close.columns = [tickers[0]]
+        return raw_close.copy()
+
+    return pd.DataFrame()
+
+
+def calculate_dynamic_sector_betas(start_date: str, end_date: str) -> dict:
+    """
+    Calculates dynamic sector betas for custom date ranges by comparing
+    sector ETFs to the S&P 500 using covariance / variance.
+    """
+    etf_map = {
+        "Technology": "XLK",
+        "Financials": "XLF",
+        "Energy": "XLE",
+        "Healthcare": "XLV",
+        "Consumer Staples": "XLP",
+        "Consumer Discretionary": "XLY",
+        "Industrials": "XLI",
+        "Utilities": "XLU",
+        "Materials": "XLB",
+        "Real Estate": "VNQ",
+        "Communication Services": "XLC"
+    }
+
+    tickers_to_fetch = list(etf_map.values()) + ["^GSPC"]
+
+    try:
+        downloaded = yf.download(
+            tickers_to_fetch,
+            start=start_date,
+            end=end_date,
+            interval="1d",
+            progress=False
+        )
+
+        if "Close" not in downloaded:
+            return {}
+
+        data = downloaded["Close"]
+        if data.empty or "^GSPC" not in data.columns:
+            return {}
+
+        market_returns = data["^GSPC"].pct_change().dropna()
+        market_variance = market_returns.var()
+
+        dynamic_betas = {}
+
+        for sector, etf_ticker in etf_map.items():
+            if etf_ticker in data.columns and market_variance > 0:
+                etf_returns = data[etf_ticker].pct_change().dropna()
+                aligned_etf, aligned_market = etf_returns.align(market_returns, join="inner")
+                covariance = aligned_etf.cov(aligned_market)
+                beta = covariance / market_variance
+                dynamic_betas[sector] = round(float(beta), 2)
+            else:
+                dynamic_betas[sector] = 1.0
+
+        return dynamic_betas
+
+    except Exception as e:
+        print(f"Failed to calculate dynamic betas: {e}")
+        return {}
+
+
+# ==========================================
+# STATIC ROUTES
 # ==========================================
 
 @router.get("/debug/categories")
 async def get_database_categories(db: DBSession):
-    """Temporary route to see exact string matches in the DB"""
     sectors = db.query(GlobalTicker.sector).filter(GlobalTicker.sector != None).distinct().all()
     industries = db.query(GlobalTicker.industry).filter(GlobalTicker.industry != None).distinct().all()
 
@@ -320,6 +415,7 @@ async def get_user_portfolios(user: CurrentUser, db: DBSession):
         .all()
     )
 
+
 @router.post("/", response_model=PortfolioResponse, status_code=status.HTTP_201_CREATED)
 async def create_portfolio(portfolio_data: PortfolioCreate, user: CurrentUser, db: DBSession):
     new_portfolio = Portfolio(
@@ -333,108 +429,10 @@ async def create_portfolio(portfolio_data: PortfolioCreate, user: CurrentUser, d
     db.refresh(new_portfolio)
     return new_portfolio
 
-@router.get("/analysis-runs", response_model=List[AnalysisRunResponse])
-async def get_analysis_runs(user: CurrentUser, db: DBSession):
-    runs = (
-        db.query(AnalysisRun)
-        .filter(AnalysisRun.user_id == user["user_id"])
-        .order_by(AnalysisRun.created_at.desc())
-        .all()
-    )
-    return runs
-
-@router.post("/analysis-runs", response_model=AnalysisRunResponse, status_code=status.HTTP_201_CREATED)
-async def save_analysis_run(run_data: AnalysisRunCreate, user: CurrentUser, db: DBSession):
-    portfolio = (
-        db.query(Portfolio)
-        .filter(
-            Portfolio.id == run_data.portfolio_id,
-            Portfolio.user_id == user["user_id"]
-        )
-        .first()
-    )
-
-    if not portfolio:
-        raise HTTPException(status_code=404, detail="Portfolio not found")
-
-    new_run = AnalysisRun(
-        id=uuid.uuid4(),
-        user_id=user["user_id"],
-        portfolio_id=run_data.portfolio_id,
-        scenario_id=run_data.scenario_id,
-        scenario_name=run_data.scenario_name,
-        start_date=run_data.start_date,
-        end_date=run_data.end_date,
-        vulnerability_score=run_data.vulnerability_score,
-        timeline_view=run_data.timeline_view,
-        notes=run_data.notes,
-    )
-
-    db.add(new_run)
-    db.commit()
-    db.refresh(new_run)
-    return new_run
-
-@router.get("/custom-scenarios", response_model=List[CustomScenarioResponse])
-async def get_custom_scenarios(user: CurrentUser, db: DBSession):
-    return (
-        db.query(CustomScenario)
-        .filter(CustomScenario.user_id == user["user_id"])
-        .order_by(CustomScenario.created_at.desc())
-        .all()
-    )
-
-@router.post("/custom-scenarios", response_model=CustomScenarioResponse)
-async def create_custom_scenario(data: CustomScenarioCreate, user: CurrentUser, db: DBSession):
-    new_scenario = CustomScenario(
-        id=uuid.uuid4(),
-        user_id=user["user_id"],
-        title=data.title,
-        description=data.description,
-        start_date=data.start_date,
-        end_date=data.end_date,
-    )
-    db.add(new_scenario)
-    db.commit()
-    db.refresh(new_scenario)
-    return new_scenario
 
 # ==========================================
-# 2. DYNAMIC ROUTES
+# ANALYSIS RUN HISTORY ROUTES
 # ==========================================
-
-@router.get("/analysis-runs/{run_id}", response_model=AnalysisRunResponse)
-async def get_analysis_run(run_id: UUID, user: CurrentUser, db: DBSession):
-    run = (
-        db.query(AnalysisRun)
-        .filter(
-            AnalysisRun.id == run_id,
-            AnalysisRun.user_id == user["user_id"]
-        )
-        .first()
-    )
-    if not run:
-        raise HTTPException(status_code=404, detail="Analysis run not found")
-    return run
-
-@router.delete("/analysis-runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_analysis_run(run_id: UUID, user: CurrentUser, db: DBSession):
-    run = (
-        db.query(AnalysisRun)
-        .filter(
-            AnalysisRun.id == run_id,
-            AnalysisRun.user_id == user["user_id"]
-        )
-        .first()
-    )
-    if not run:
-        raise HTTPException(status_code=404, detail="Analysis run not found")
-    db.delete(run)
-    db.commit()
-    return None
-
-# --- ANALYSIS RUN HISTORY ROUTES (FR-13) ---
-# These must be defined BEFORE /{portfolio_id} to avoid being matched as a portfolio ID
 
 @router.post("/analysis-runs", response_model=AnalysisRunResponse, status_code=status.HTTP_201_CREATED)
 async def save_analysis_run(run_data: AnalysisRunCreate, user: CurrentUser, db: DBSession):
@@ -516,8 +514,9 @@ async def delete_analysis_run(run_id: UUID, user: CurrentUser, db: DBSession):
     return None
 
 
-# --- CUSTOM SCENARIO ROUTES (FR-21) ---
-# These must also be defined BEFORE /{portfolio_id}
+# ==========================================
+# CUSTOM SCENARIO ROUTES
+# ==========================================
 
 @router.post("/custom-scenarios", response_model=CustomScenarioResponse)
 async def create_custom_scenario(data: CustomScenarioCreate, user: CurrentUser, db: DBSession):
@@ -545,8 +544,9 @@ async def get_custom_scenarios(user: CurrentUser, db: DBSession):
     )
 
 
-# --- WILDCARD PORTFOLIO ROUTES ---
-# These must come LAST so static paths above are not swallowed
+# ==========================================
+# WILDCARD PORTFOLIO ROUTES
+# ==========================================
 
 @router.get("/{portfolio_id}", response_model=PortfolioResponse)
 async def get_portfolio(portfolio_id: str, user: CurrentUser, db: DBSession):
@@ -563,32 +563,38 @@ async def get_portfolio(portfolio_id: str, user: CurrentUser, db: DBSession):
     if not portfolio:
         raise HTTPException(status_code=404, detail="Portfolio not found")
 
-    tickers_list = [h.ticker for h in portfolio.holdings]
+    tickers_list = [h.ticker.upper() for h in portfolio.holdings]
     metadata = db.query(GlobalTicker).filter(GlobalTicker.symbol.in_(tickers_list)).all()
     meta_map = {m.symbol.upper(): m for m in metadata}
 
     if tickers_list:
         try:
-            data = yf.download(tickers_list, period="1d", interval="1m", progress=False)
-            for holding in portfolio.holdings:
-                ticker_upper = holding.ticker.upper()
-                ticker_meta = meta_map.get(ticker_upper)
+            downloaded = yf.download(tickers_list, period="1d", interval="1m", progress=False)
 
-                holding.sector = ticker_meta.sector if ticker_meta else "Unknown"
-                holding.industry = ticker_meta.industry if ticker_meta else "Unknown"
+            if "Close" in downloaded:
+                close_data = build_price_frame(downloaded["Close"], tickers_list)
 
-                try:
-                    if len(tickers_list) == 1:
-                        price = data["Close"].iloc[-1]
-                    else:
-                        price = data["Close"][ticker_upper].iloc[-1]
-                    holding.current_price = float(price)
-                except Exception:
-                    holding.current_price = holding.avg_price_paid
+                for holding in portfolio.holdings:
+                    ticker_upper = holding.ticker.upper()
+                    ticker_meta = meta_map.get(ticker_upper)
+
+                    holding.sector = ticker_meta.sector if ticker_meta else "Unknown"
+                    holding.industry = ticker_meta.industry if ticker_meta else "Unknown"
+
+                    try:
+                        if ticker_upper in close_data.columns and not close_data[ticker_upper].dropna().empty:
+                            price = close_data[ticker_upper].dropna().iloc[-1]
+                            holding.current_price = float(price)
+                        else:
+                            holding.current_price = holding.avg_price_paid
+                    except Exception:
+                        holding.current_price = holding.avg_price_paid
+
         except Exception as e:
             print(f"Sync Error: {e}")
 
     return portfolio
+
 
 @router.get("/{portfolio_id}/history")
 async def get_portfolio_history(
@@ -617,29 +623,34 @@ async def get_portfolio_history(
 
     try:
         if start and end:
-            data = yf.download(
+            downloaded = yf.download(
                 tickers,
                 start=start,
                 end=end,
                 interval="1d",
                 progress=False
-            )["Close"]
+            )
         else:
-            data = yf.download(
+            downloaded = yf.download(
                 tickers,
                 period=period,
                 interval="1d",
                 progress=False
-            )["Close"]
+            )
 
-        if len(tickers) == 1:
-            data = data.to_frame(name=tickers[0])
+        if "Close" not in downloaded:
+            return []
 
-        data = data.ffill().dropna()
+        data = build_price_frame(downloaded["Close"], tickers)
+        if data.empty:
+            return []
+
+        data = data.ffill().dropna(how="all")
 
         history_series = pd.Series(0.0, index=data.index)
         for ticker, shares in holding_map.items():
-            history_series += data[ticker] * shares
+            if ticker in data.columns:
+                history_series += data[ticker].fillna(method="ffill") * shares
 
         chart_data = [
             {
@@ -650,63 +661,11 @@ async def get_portfolio_history(
         ]
 
         return chart_data
+
     except Exception as e:
         print(f"History Error: {e}")
         raise HTTPException(status_code=500, detail="Market data unavailable")
 
-def calculate_dynamic_sector_betas(start_date: str, end_date: str) -> dict:
-    """
-    Calculates real-time sector betas for custom date ranges by comparing 
-    Sector ETFs to the S&P 500 using historical covariance.
-    """
-    # Map our internal sectors to real-world SPDR Sector ETFs
-    etf_map = {
-        "Technology": "XLK",
-        "Financials": "XLF",
-        "Energy": "XLE",
-        "Healthcare": "XLV",
-        "Consumer Staples": "XLP",
-        "Consumer Discretionary": "XLY",
-        "Industrials": "XLI",
-        "Utilities": "XLU",
-        "Materials": "XLB",
-        "Real Estate": "VNQ",
-        "Communication Services": "XLC"
-    }
-    
-    # We download all sector ETFs plus the S&P 500 (^GSPC)
-    tickers_to_fetch = list(etf_map.values()) + ["^GSPC"]
-    
-    try:
-        data = yf.download(tickers_to_fetch, start=start_date, end=end_date, interval="1d", progress=False)["Close"]
-        if data.empty or "^GSPC" not in data.columns:
-            return {}
-
-        market_returns = data["^GSPC"].pct_change().dropna()
-        dynamic_betas = {}
-        
-        # Calculate Beta = Covariance(Sector, Market) / Variance(Market)
-        market_variance = market_returns.var()
-        
-        for sector, etf_ticker in etf_map.items():
-            if etf_ticker in data.columns and market_variance > 0:
-                etf_returns = data[etf_ticker].pct_change().dropna()
-                
-                # Align the dates just in case
-                aligned_etf, aligned_market = etf_returns.align(market_returns, join='inner')
-                
-                covariance = aligned_etf.cov(aligned_market)
-                beta = covariance / market_variance
-                dynamic_betas[sector] = round(beta, 2)
-            else:
-                dynamic_betas[sector] = 1.0
-                
-        print(f"Generated Custom Betas for {start_date} to {end_date}: {dynamic_betas}")
-        return dynamic_betas
-        
-    except Exception as e:
-        print(f"Failed to calculate dynamic betas: {e}")
-        return {}
 
 @router.get("/{portfolio_id}/analyze")
 async def analyze_portfolio_crisis(
@@ -728,40 +687,50 @@ async def analyze_portfolio_crisis(
     )
 
     if not portfolio or not portfolio.holdings:
-        return []
+        return {
+            "data": [],
+            "metrics": {},
+            "riskMetrics": {
+                "volatility": 0.0,
+                "max_drawdown": 0.0,
+                "sharpe_ratio": 0.0,
+                "annualized_return": 0.0,
+            },
+            "sectorAttribution": [],
+            "riskGauge": {
+                "score": 0,
+                "label": "Low",
+            },
+        }
 
     tickers_list = [h.ticker.upper() for h in portfolio.holdings]
+    holding_map = {h.ticker.upper(): h.shares for h in portfolio.holdings}
 
-    # --- EFFICIENCY UPGRADE: Safer YFinance DataFrame parsing ---
     current_prices = {}
     try:
         if tickers_list:
-            yf_data = yf.download(tickers_list, period="1d", progress=False)
-            if "Close" in yf_data:
-                close_data = yf_data["Close"]
-                if len(tickers_list) == 1:
-                    # It's a Series
-                    current_prices[tickers_list[0]] = float(close_data.iloc[-1])
-                else:
-                    # It's a DataFrame
-                    for ticker in tickers_list:
-                        if ticker in close_data.columns and pd.notna(close_data[ticker].iloc[-1]):
-                            current_prices[ticker] = float(close_data[ticker].iloc[-1])
+            current_download = yf.download(tickers_list, period="1d", progress=False)
+            if "Close" in current_download:
+                close_data = build_price_frame(current_download["Close"], tickers_list)
+                for ticker in tickers_list:
+                    if ticker in close_data.columns and not close_data[ticker].dropna().empty:
+                        current_prices[ticker] = float(close_data[ticker].dropna().iloc[-1])
     except Exception as e:
-        print(f"YFinance fetching error in /analyze: {e}")
-        pass # We will fallback to avg_price_paid or 100.0
+        print(f"YFinance fetching error in /analyze current prices: {e}")
 
     metadata = db.query(GlobalTicker).filter(GlobalTicker.symbol.in_(tickers_list)).all()
-    meta_map = {m.symbol.upper(): {"sector": m.sector, "industry": m.industry} for m in metadata}
+    meta_map = {
+        m.symbol.upper(): {
+            "sector": m.sector,
+            "industry": m.industry
+        }
+        for m in metadata
+    }
 
     if scenario == "custom":
         scenario_betas = calculate_dynamic_sector_betas(start, end)
     else:
         scenario_betas = CRISIS_BETAS.get(scenario, {})
-
-    print(f"Debugging {scenario.upper()}")
-    print(f"1. Did we find the scenario dict? {'YES' if scenario_betas else 'NO (Betas are empty)'}")
-    print(f"2. Number of betas loaded: {len(scenario_betas)}")
 
     total_portfolio_value = 0.0
     stock_values = {}
@@ -769,11 +738,10 @@ async def analyze_portfolio_crisis(
     for holding in portfolio.holdings:
         ticker = holding.ticker.upper()
         shares = holding.shares
-        
-        # Priority: Live Price -> Avg Price Paid -> $100 Fallback
+
         price = current_prices.get(ticker)
-        if not price:
-            price = holding.avg_price_paid if holding.avg_price_paid else 100.0
+        if price is None:
+            price = holding.avg_price_paid if holding.avg_price_paid is not None else 100.0
 
         value = shares * price
         stock_values[ticker] = value
@@ -782,42 +750,44 @@ async def analyze_portfolio_crisis(
     portfolio_beta = 0.0
     user_sector_exposures = {}
 
-    # --- BUG FIX: Avoid Division by Zero if Portfolio is empty or worth $0 ---
     if total_portfolio_value > 0:
         for ticker, value in stock_values.items():
             weight = value / total_portfolio_value
-            
+
             meta = meta_map.get(ticker, {"sector": "Default", "industry": "Default"})
             raw_sector = meta["sector"] or "Default"
             raw_industry = meta["industry"] or "Default"
 
-            sector = TERM_MAP.get(raw_sector, raw_sector)
-            industry = TERM_MAP.get(raw_industry, raw_industry)
+            sector = normalize_term(raw_sector)
+            industry = normalize_term(raw_industry)
 
             stock_beta = scenario_betas.get(industry, scenario_betas.get(sector, 1.0))
-
-            print(f"Ticker: {ticker} | DB Sector: {raw_sector} | Mapped Sector: {sector} | Assigned Beta: {stock_beta}")
-
             portfolio_beta += (weight * stock_beta)
 
             if sector != "Default":
                 if sector not in user_sector_exposures:
-                    user_sector_exposures[sector] = {"weight": 0, "beta": stock_beta}
+                    user_sector_exposures[sector] = {"weight": 0.0, "beta": stock_beta}
                 user_sector_exposures[sector]["weight"] += weight
 
     portfolio_beta = max(0.1, min(portfolio_beta, 3.5))
 
-    sorted_user_sectors = sorted(user_sector_exposures.keys(), key=lambda s: user_sector_exposures[s]["beta"])
+    sorted_user_sectors = sorted(
+        user_sector_exposures.keys(),
+        key=lambda s: user_sector_exposures[s]["beta"]
+    )
     top_hedge = sorted_user_sectors[0] if sorted_user_sectors else "Diversified"
     top_risk = sorted_user_sectors[-1] if sorted_user_sectors else "Diversified"
 
     try:
-        market_data = yf.download("^GSPC", start=start, end=end, interval="1d", progress=False)
-        market_close = market_data["Close"].ffill().dropna()
+        market_download = yf.download("^GSPC", start=start, end=end, interval="1d", progress=False)
+        if "Close" not in market_download:
+            raise HTTPException(status_code=500, detail="Market benchmark data unavailable")
+
+        market_close = market_download["Close"].ffill().dropna()
 
         if market_close.empty:
-            return []
-            
+            raise HTTPException(status_code=500, detail="Market benchmark data unavailable")
+
         if isinstance(market_close, pd.DataFrame):
             market_close = market_close.iloc[:, 0]
 
@@ -828,8 +798,8 @@ async def analyze_portfolio_crisis(
         indexed_portfolio = (1 + simulated_port_returns).cumprod() * 100
 
         vulnerability_score = int(min(max((portfolio_beta * 50), 10), 100))
-        market_max_drop = float((indexed_market.min() - 100))
-        port_max_drop = float((indexed_portfolio.min() - 100))
+        market_max_drop = float(indexed_market.min() - 100)
+        port_max_drop = float(indexed_portfolio.min() - 100)
 
         chart_data = [
             {
@@ -840,6 +810,47 @@ async def analyze_portfolio_crisis(
             for date, port_val, market_val in zip(market_close.index, indexed_portfolio, indexed_market)
         ]
 
+        # -------- NEW: fetch historical stock data for FR-10 / FR-11 / FR-12 --------
+        historical_download = yf.download(
+            tickers_list,
+            start=start,
+            end=end,
+            interval="1d",
+            progress=False
+        )
+
+        stock_prices = pd.DataFrame()
+        if "Close" in historical_download:
+            stock_prices = build_price_frame(historical_download["Close"], tickers_list)
+            stock_prices = stock_prices.ffill().dropna(how="all")
+
+        portfolio_series = pd.Series(dtype=float)
+        if not stock_prices.empty:
+            portfolio_series = pd.Series(0.0, index=stock_prices.index)
+            for ticker, shares in holding_map.items():
+                if ticker in stock_prices.columns:
+                    portfolio_series += stock_prices[ticker].fillna(method="ffill") * shares
+            portfolio_series = portfolio_series.dropna()
+
+        risk_metrics = calculate_risk_metrics(portfolio_series)
+
+        ticker_to_sector = {}
+        for ticker in tickers_list:
+            meta = meta_map.get(ticker, {})
+            sector = normalize_term(meta.get("sector"))
+            ticker_to_sector[ticker] = sector if sector else "Unknown"
+
+        sector_attribution = calculate_sector_attribution(
+            stock_prices=stock_prices,
+            holdings=holding_map,
+            ticker_to_sector=ticker_to_sector,
+        )
+
+        risk_gauge = calculate_risk_score(
+            metrics=risk_metrics,
+            sector_attribution=sector_attribution,
+        )
+
         return {
             "data": chart_data,
             "metrics": {
@@ -849,12 +860,18 @@ async def analyze_portfolio_crisis(
                 "marketDrawdown": round(market_max_drop, 1),
                 "topHedge": top_hedge,
                 "topRisk": top_risk
-            }
+            },
+            "riskMetrics": risk_metrics,
+            "sectorAttribution": sector_attribution,
+            "riskGauge": risk_gauge,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Analysis Error: {e}")
         raise HTTPException(status_code=500, detail="Failed to calculate scenario analysis.")
+
 
 @router.delete("/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_portfolio(portfolio_id: str, user: CurrentUser, db: DBSession):
@@ -873,6 +890,7 @@ async def delete_portfolio(portfolio_id: str, user: CurrentUser, db: DBSession):
     db.delete(portfolio)
     db.commit()
     return None
+
 
 @router.post("/{portfolio_id}/holdings", status_code=status.HTTP_201_CREATED)
 async def add_holdings(portfolio_id: str, holdings_data: List[HoldingCreate], user: CurrentUser, db: DBSession):

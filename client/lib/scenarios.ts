@@ -1,48 +1,88 @@
-import fs from 'fs';
-import path from 'path';
-import matter from 'gray-matter';
+import fs from "fs";
+import path from "path";
+import matter from "gray-matter";
 
-const scenariosDirectory = path.join(process.cwd(), 'content/scenarios');
+const scenariosDirectory = path.join(process.cwd(), "content/scenarios");
 
-// ENSURE THE NAME MATCHES: getAllScenarios
+type ScenarioMeta = Record<string, any>;
+
+function parseDateRange(dateRange?: string): { startDate?: string; endDate?: string } {
+  if (!dateRange) return {};
+
+  const normalized = dateRange.replace(/–/g, "-").replace(/\s+-\s+/g, " - ");
+  const parts = normalized.split(" - ").map((item) => item.trim());
+
+  if (parts.length === 2) {
+    const start = new Date(parts[0]);
+    const end = new Date(parts[1]);
+
+    return {
+      startDate: Number.isNaN(start.getTime()) ? undefined : start.toISOString().slice(0, 10),
+      endDate: Number.isNaN(end.getTime()) ? undefined : end.toISOString().slice(0, 10),
+    };
+  }
+
+  const single = new Date(normalized);
+  if (!Number.isNaN(single.getTime())) {
+    const iso = single.toISOString().slice(0, 10);
+    return { startDate: iso, endDate: iso };
+  }
+
+  return {};
+}
+
+function normalizeScenario(id: string, data: ScenarioMeta) {
+  const derivedDates = parseDateRange(data.dateRange);
+
+  return {
+    id,
+    ...data,
+    description: data.description || data.shortDescription || "",
+    startDate: data.startDate || derivedDates.startDate || "",
+    endDate: data.endDate || derivedDates.endDate || "",
+    markers: Array.isArray(data.markers) ? data.markers : [],
+  };
+}
+
 export function getAllScenarios() {
-  // Create folder if it doesn't exist to prevent crash
   if (!fs.existsSync(scenariosDirectory)) {
     fs.mkdirSync(scenariosDirectory, { recursive: true });
     return [];
   }
 
-  const fileNames = fs.readdirSync(scenariosDirectory);
-  
+  const fileNames = fs
+    .readdirSync(scenariosDirectory)
+    .filter((fileName) => fileName.endsWith(".mdx") || fileName.endsWith(".mx"));
+
   return fileNames
-    .filter(fileName => fileName.endsWith('.mdx'))
     .map((fileName) => {
-      // The filename (without .mdx) is the exact path Next.js needs
-      const id = fileName.replace(/\.mdx$/, '');
+      const id = fileName.replace(/\.(mdx|mx)$/, "");
       const fullPath = path.join(scenariosDirectory, fileName);
-      const fileContents = fs.readFileSync(fullPath, 'utf8');
+      const fileContents = fs.readFileSync(fullPath, "utf8");
       const { data } = matter(fileContents);
 
-      return {
-        ...data, // Spread the markdown data FIRST
-        id,      // Put the filename ID LAST so it overrides any conflicting ID in the markdown
-      };
-    });
+      return normalizeScenario(id, data);
+    })
+    .sort((a, b) => String(a.title || a.label || a.id).localeCompare(String(b.title || b.label || b.id)));
 }
 
 export async function getScenarioById(id: string) {
-  const fullPath = path.join(scenariosDirectory, `${id}.mdx`);
-  
-  // I added a better error message just in case it ever fails again!
-  if (!fs.existsSync(fullPath)) {
-    throw new Error(`File not found: ${fullPath}`);
+  const candidatePaths = [
+    path.join(scenariosDirectory, `${id}.mdx`),
+    path.join(scenariosDirectory, `${id}.mx`),
+  ];
+
+  const fullPath = candidatePaths.find((candidate) => fs.existsSync(candidate));
+
+  if (!fullPath) {
+    throw new Error(`File not found for scenario: ${id}`);
   }
 
-  const fileContents = fs.readFileSync(fullPath, 'utf8');
+  const fileContents = fs.readFileSync(fullPath, "utf8");
   const { data, content } = matter(fileContents);
 
   return {
-    metadata: data,
+    metadata: normalizeScenario(id, data),
     content,
   };
 }
