@@ -1,256 +1,240 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge"; // If you deleted this earlier, use <span> or install it again
-import { Send, Bot, AlertTriangle, TrendingDown, TrendingUp, Activity, Sparkles } from "lucide-react";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
+import { 
+  Send, Bot, AlertTriangle, TrendingDown, TrendingUp, 
+  Activity, Sparkles, User, ChevronRight, Loader2, BarChart3, Play 
+} from "lucide-react";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { fetchPortfolios, type Portfolio } from "@/lib/api";
 
-// --- MOCK DATA FOR FORECAST (Fan Chart) ---
-const forecastData = [
-  { month: "Now", bear: 100000, base: 100000, bull: 100000 },
-  { month: "1M", bear: 92000, base: 101500, bull: 108000 },
-  { month: "2M", bear: 88000, base: 103000, bull: 115000 },
-  { month: "3M", bear: 85000, base: 104500, bull: 121000 },
-  { month: "4M", bear: 82000, base: 106000, bull: 128000 },
-  { month: "5M", bear: 79000, base: 107500, bull: 135000 },
-  { month: "6M", bear: 76000, base: 109000, bull: 142000 },
-];
+type UIAction = {
+  type: "none" | "options" | "portfolio_select";
+  choices: { id: string; label: string }[];
+};
+
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  uiAction?: UIAction;
+};
 
 export default function SimulationPage() {
   const [timeframe, setTimeframe] = useState("6M");
-  const [prompt, setPrompt] = useState("");
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>("");
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [isChartLoading, setIsChartLoading] = useState(false);
+  
+  const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [simulationResult, setSimulationResult] = useState<any>(null);
+  const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
+  const [customActionInput, setCustomActionInput] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { role: "assistant", content: "I am ready. What \"Black Swan\" event would you like to simulate today?" }
+  ]);
 
-  // Fake AI Handler
-  const handleSimulate = () => {
-    if (!prompt) return;
+  // Load Portfolios on mount
+  useEffect(() => {
+    async function loadData() {
+      const data = await fetchPortfolios();
+      if (data && data.length > 0) {
+        setPortfolios(data);
+        setSelectedPortfolioId(data[0].id);
+      }
+    }
+    loadData();
+  }, []);
+
+  // MANUAL TRIGGER FUNCTION
+  const handleRunSimulation = async () => {
+    if (!selectedPortfolioId) return;
+    
+    setIsChartLoading(true);
+    console.log("🚀 User triggered Simulation for Portfolio:", selectedPortfolioId);
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/forecast/lstm/${selectedPortfolioId}?timeframe=${timeframe}`);
+      if (!response.ok) throw new Error("Failed to fetch LSTM projection");
+      const data = await response.json();
+      setChartData(data);
+    } catch (error) {
+      console.error("Simulation failed:", error);
+      alert("Simulation failed. Check your backend terminal for checkpoints.");
+    } finally {
+      setIsChartLoading(false);
+    }
+  };
+
+  const handleSendMessage = async (overrideText?: string) => {
+    const textToSend = overrideText || inputText;
+    if (!textToSend.trim()) return;
+    const userMsg: ChatMessage = { role: "user", content: textToSend };
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
+    setInputText("");
+    setCustomActionInput(""); 
     setIsTyping(true);
     
-    // Simulate API delay
-    setTimeout(() => {
-      setIsTyping(false);
-      setSimulationResult({
-        title: "Impact Analysis: " + prompt,
-        projectedLoss: "-12.4%",
-        recoveryTime: "8 Months",
-        impactedSectors: [
-            { name: "Insurance", change: "-15%", status: "critical" },
-            { name: "Real Estate", change: "-8.2%", status: "negative" },
-            { name: "Construction", change: "+4.1%", status: "positive" }, // Reconstruction boom
-        ],
-        summary: "This scenario creates a dual-shock: immediate claims payouts hit the insurance sector, while regional instability drops real estate values. However, construction sees a mid-term boost due to rebuilding efforts."
+    try {
+      const response = await fetch("http://127.0.0.1:8000/chaos/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: newMessages, portfolios }),
       });
-    }, 1500);
+      const data = await response.json();
+      if (data.agentMessage) {
+        setMessages(prev => [...prev, { role: "assistant", content: data.agentMessage, uiAction: data.uiAction }]);
+      }
+      if (data.dashboardData) setSimulationResult(data.dashboardData);
+    } catch (error) {
+      console.error("Chaos error:", error);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
   return (
-    <div className="space-y-8 h-full">
-      
-      {/* HEADER */}
+    <div className="space-y-8 h-full p-6 bg-slate-50/30">
       <div className="flex justify-between items-center">
         <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
                 <Activity className="text-blue-600"/> Simulation Lab
             </h1>
-            <p className="text-slate-500 mt-1">
-                Project future performance or use AI to generate custom "Black Swan" crisis scenarios.
-            </p>
+            <p className="text-slate-500 mt-1">Project performance and simulate crisis scenarios.</p>
         </div>
       </div>
 
-      {/* SECTION 1: STANDARD FORECAST (Monte Carlo) */}
-      <Card>
-        <CardHeader>
-            <div className="flex items-center justify-between">
-                <div>
-                    <CardTitle>Portfolio Trajectory (Monte Carlo)</CardTitle>
-                    <CardDescription>
-                        Projected range of returns based on current volatility (95% Confidence Interval).
-                    </CardDescription>
+      <Card className="border-slate-200 shadow-sm overflow-hidden">
+        <CardHeader className="border-b bg-white/50">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <BarChart3 size={18} className="text-blue-500"/> AI Trajectory
+                </CardTitle>
+                
+                <div className="flex items-center gap-3">
+                    <select 
+                      value={selectedPortfolioId}
+                      onChange={(e) => setSelectedPortfolioId(e.target.value)}
+                      className="text-xs p-2 border rounded-md bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {portfolios.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+
+                    <Tabs value={timeframe} className="w-[180px]" onValueChange={setTimeframe}>
+                        <TabsList className="grid w-full grid-cols-3 h-9">
+                            <TabsTrigger value="1M" className="text-[10px]">1M</TabsTrigger>
+                            <TabsTrigger value="6M" className="text-[10px]">6M</TabsTrigger>
+                            <TabsTrigger value="1Y" className="text-[10px]">1Y</TabsTrigger>
+                        </TabsList>
+                    </Tabs>
+
+                    <Button 
+                      onClick={handleRunSimulation} 
+                      disabled={isChartLoading || !selectedPortfolioId}
+                      className="bg-blue-600 hover:bg-blue-700 h-9 px-4 text-xs font-bold flex gap-2 shadow-lg transition-all"
+                    >
+                      {isChartLoading ? <Loader2 className="animate-spin" size={14}/> : <Play size={14} fill="currentColor"/>}
+                      RUN
+                    </Button>
                 </div>
-                <Tabs defaultValue="6M" className="w-[300px]" onValueChange={setTimeframe}>
-                    <TabsList className="grid w-full grid-cols-3">
-                        <TabsTrigger value="1M">1 Month</TabsTrigger>
-                        <TabsTrigger value="6M">6 Months</TabsTrigger>
-                        <TabsTrigger value="1Y">1 Year</TabsTrigger>
-                    </TabsList>
-                </Tabs>
             </div>
         </CardHeader>
-        <CardContent className="h-[350px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={forecastData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                    <defs>
-                        <linearGradient id="colorBull" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3}/>
-                            <stop offset="95%" stopColor="#22c55e" stopOpacity={0}/>
-                        </linearGradient>
-                        <linearGradient id="colorBear" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
-                            <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
-                        </linearGradient>
-                    </defs>
-                    <XAxis dataKey="month" stroke="#94a3b8" />
-                    <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val/1000}k`} />
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                    <Tooltip />
-                    
-                    {/* The "Cone of Uncertainty" */}
-                    <Area type="monotone" dataKey="bull" stroke="#22c55e" fillOpacity={1} fill="url(#colorBull)" name="Best Case" />
-                    <Area type="monotone" dataKey="base" stroke="#3b82f6" fill="none" strokeWidth={3} name="Likely Path" />
-                    <Area type="monotone" dataKey="bear" stroke="#ef4444" fillOpacity={1} fill="url(#colorBear)" name="Worst Case" />
-                </AreaChart>
-            </ResponsiveContainer>
+        <CardContent className="h-[350px] w-full relative pt-6">
+            {isChartLoading && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/60 backdrop-blur-[2px]">
+                  <Loader2 className="animate-spin text-blue-500 mb-2" size={32} />
+                  <p className="text-sm font-semibold text-slate-700">Executing LSTM Simulations...</p>
+              </div>
+            )}
+            
+            {chartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData}>
+                      <defs>
+                          <linearGradient id="colorBull" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#22c55e" stopOpacity={0.2}/><stop offset="95%" stopColor="#22c55e" stopOpacity={0}/></linearGradient>
+                          <linearGradient id="colorBear" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.2}/><stop offset="95%" stopColor="#ef4444" stopOpacity={0}/></linearGradient>
+                      </defs>
+                      <XAxis dataKey="month" hide />
+                      <YAxis stroke="#94a3b8" fontSize={10} tickFormatter={(val) => `$${(val/1000).toFixed(1)}k`} />
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <Tooltip />
+                      <Area type="monotone" dataKey="bull" stroke="#22c55e" fill="url(#colorBull)" name="Bull" />
+                      <Area type="monotone" dataKey="base" stroke="#3b82f6" strokeWidth={2.5} name="Base" />
+                      <Area type="monotone" dataKey="bear" stroke="#ef4444" fill="url(#colorBear)" name="Bear" />
+                  </AreaChart>
+              </ResponsiveContainer>
+            ) : !isChartLoading && (
+              <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                <BarChart3 size={48} className="mb-4 opacity-10" />
+                <p className="text-sm font-medium">Select a portfolio and click RUN to generate projections.</p>
+              </div>
+            )}
         </CardContent>
       </Card>
 
-      {/* SECTION 2: THE CHAOS LAB (AI Agent) */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-6 h-[500px]">
-         
-         {/* LEFT: Chat Interface */}
+      {/* SECTION 2: THE CHAOS LAB (Chat Logic) */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-6 h-[550px]">
          <div className="col-span-12 md:col-span-5 flex flex-col h-full">
-            <Card className="h-full flex flex-col bg-slate-900 border-slate-800 text-white">
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-blue-400">
-                        <Sparkles size={20}/> Chaos Agent
-                    </CardTitle>
-                    <CardDescription className="text-slate-400">
-                        Describe a specific event (e.g. "President dies", "Earthquake in CA"). 
-                        The AI will calculate the market shock.
-                    </CardDescription>
+            <Card className="h-full flex flex-col bg-slate-900 border-slate-800 text-white shadow-xl">
+                <CardHeader className="border-b border-slate-800">
+                    <CardTitle className="flex items-center gap-2 text-blue-400"><Sparkles size={20}/> Chaos Agent</CardTitle>
                 </CardHeader>
-                
-                {/* Chat History Area */}
-                <CardContent className="flex-1 bg-slate-950/50 mx-6 mb-4 rounded-lg p-4 space-y-4 overflow-y-auto">
-                    <div className="flex gap-3">
-                        <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shrink-0">
-                            <Bot size={16} />
-                        </div>
-                        <div className="bg-slate-800 p-3 rounded-lg text-sm text-slate-200">
-                            I am ready. What "Black Swan" event would you like to simulate today?
-                        </div>
-                    </div>
-                    {/* User Message (Visual only for now) */}
-                    {simulationResult && (
-                         <div className="flex gap-3 flex-row-reverse">
-                            <div className="bg-blue-600 p-3 rounded-lg text-sm text-white">
-                                {simulationResult.title.replace("Impact Analysis: ", "")}
-                            </div>
-                        </div>
-                    )}
-                     {/* AI Response */}
-                    {simulationResult && (
-                        <div className="flex gap-3">
-                             <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shrink-0">
-                                <Bot size={16} />
-                            </div>
-                            <div className="bg-slate-800 p-3 rounded-lg text-sm text-slate-200">
-                                Analysis complete. I have projected the impact on the dashboard to the right.
-                            </div>
-                        </div>
-                    )}
-                    {isTyping && (
-                        <div className="flex gap-2 text-slate-500 text-xs items-center ml-12">
-                            <span className="animate-pulse">Thinking...</span>
-                        </div>
-                    )}
+                <CardContent className="flex-1 bg-slate-950/40 mx-4 mt-4 mb-2 rounded-xl p-4 space-y-4 overflow-y-auto border border-slate-800/50">
+                    {messages.map((msg, idx) => (
+                      <div key={idx} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${msg.role === "user" ? "bg-slate-700" : "bg-blue-600"}`}>
+                              {msg.role === "user" ? <User size={16} /> : <Bot size={16} />}
+                          </div>
+                          <div className={`flex flex-col gap-2 max-w-[85%]`}>
+                              <div className={`p-3 rounded-2xl text-sm ${msg.role === "user" ? "bg-blue-600" : "bg-slate-800"}`}>{msg.content}</div>
+                              {idx === messages.length - 1 && !isTyping && msg.uiAction?.choices.map(choice => (
+                                <Button key={choice.id} variant="outline" className="justify-start h-auto py-2 text-xs bg-slate-800/40 border-slate-700 text-slate-300" onClick={() => handleSendMessage(choice.label)}>
+                                  {choice.label}
+                                </Button>
+                              ))}
+                          </div>
+                      </div>
+                    ))}
                 </CardContent>
-
-                {/* Input Area */}
                 <div className="p-4 border-t border-slate-800 flex gap-2">
-                    <Input 
-                        placeholder="E.g. Earthquake in California..." 
-                        className="bg-slate-800 border-slate-700 text-white"
-                        value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && handleSimulate()}
-                    />
-                    <Button onClick={handleSimulate} className="bg-blue-600 hover:bg-blue-700">
-                        <Send size={18}/>
-                    </Button>
+                    <Input placeholder="Describe a crisis..." className="bg-slate-800 border-slate-700 text-white" value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSendMessage()} />
+                    <Button onClick={() => handleSendMessage()} className="bg-blue-600 hover:bg-blue-700"><Send size={18}/></Button>
                 </div>
             </Card>
          </div>
 
-         {/* RIGHT: Results Dashboard */}
          <div className="col-span-12 md:col-span-7 h-full">
             {simulationResult ? (
-                <Card className="h-full flex flex-col border-blue-200 bg-blue-50/30">
-                    <CardHeader className="pb-2">
-                        <div className="flex justify-between items-start">
-                             <div>
-                                <CardTitle className="text-xl text-slate-900">Projected Impact</CardTitle>
-                                <CardDescription>Based on: <span className="font-semibold text-slate-700">"{simulationResult.title}"</span></CardDescription>
-                             </div>
-                             <div className="text-right">
-                                <div className="text-3xl font-bold text-red-600">{simulationResult.projectedLoss}</div>
-                                <div className="text-xs text-slate-500 uppercase font-bold">Portfolio Value</div>
-                             </div>
+                <Card className="h-full flex flex-col border-blue-200 bg-blue-50/20 shadow-lg p-6">
+                    <div className="flex justify-between items-center mb-6">
+                      <CardTitle className="text-2xl font-bold">{simulationResult.title}</CardTitle>
+                      <div className="text-3xl font-black text-red-600">{simulationResult.projectedLoss}</div>
+                    </div>
+                    <div className="bg-white p-4 rounded-xl border mb-6 italic text-sm text-slate-600">"{simulationResult.summary}"</div>
+                    <div className="space-y-3">
+                      {simulationResult.impactedSectors.map((s: any, i: number) => (
+                        <div key={i} className="flex justify-between p-4 bg-white rounded-lg border">
+                          <span className="font-semibold text-sm">{s.name}</span>
+                          <span className={`font-bold ${s.status === 'critical' ? 'text-red-600' : 'text-green-600'}`}>{s.change}</span>
                         </div>
-                    </CardHeader>
-                    
-                    <CardContent className="space-y-6 pt-4">
-                        {/* Summary Box */}
-                        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
-                            <h4 className="font-bold text-slate-900 mb-1 flex items-center gap-2">
-                                <Bot size={16} className="text-blue-600"/> Agent Summary
-                            </h4>
-                            <p className="text-sm text-slate-600 leading-relaxed">
-                                {simulationResult.summary}
-                            </p>
-                        </div>
-
-                        {/* Sector Heatmap List */}
-                        <div>
-                            <h4 className="font-bold text-slate-900 mb-3 text-sm uppercase tracking-wide">Sector Impact</h4>
-                            <div className="space-y-3">
-                                {simulationResult.impactedSectors.map((sector: any, idx: number) => (
-                                    <div key={idx} className="flex items-center justify-between p-3 bg-white rounded-md border border-slate-100 shadow-sm">
-                                        <div className="flex items-center gap-3">
-                                            {sector.status === "critical" ? <TrendingDown className="text-red-500" size={20}/> : 
-                                             sector.status === "negative" ? <TrendingDown className="text-orange-500" size={20}/> :
-                                             <TrendingUp className="text-green-500" size={20}/>
-                                            }
-                                            <span className="font-medium text-slate-800">{sector.name}</span>
-                                        </div>
-                                        <span className={`font-bold ${
-                                            sector.status === "critical" ? "text-red-600" : 
-                                            sector.status === "negative" ? "text-orange-600" : "text-green-600"
-                                        }`}>
-                                            {sector.change}
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Recovery Estimate */}
-                        <div className="flex items-center gap-2 text-sm text-slate-500 pt-2">
-                            <Activity size={16}/> Estimated Recovery Time: <span className="font-bold text-slate-900">{simulationResult.recoveryTime}</span>
-                        </div>
-                    </CardContent>
+                      ))}
+                    </div>
                 </Card>
             ) : (
-                /* EMPTY STATE (Before running simulation) */
-                <Card className="h-full flex flex-col items-center justify-center text-center p-8 border-dashed border-2 border-slate-200 bg-slate-50/50">
-                    <div className="bg-slate-100 p-4 rounded-full mb-4">
-                        <AlertTriangle size={32} className="text-slate-400"/>
-                    </div>
-                    <h3 className="text-lg font-semibold text-slate-600">No Scenario Running</h3>
-                    <p className="text-slate-400 max-w-sm mt-2">
-                        Use the chat panel on the left to describe a hypothetical crisis. The AI will analyze the impact on your specific holdings.
-                    </p>
+                <Card className="h-full flex flex-col items-center justify-center text-center p-12 border-dashed border-2 border-slate-200 bg-slate-50/50">
+                    <AlertTriangle size={48} className="text-slate-300 mb-4"/>
+                    <h3 className="text-xl font-bold text-slate-700">Waiting for Directives</h3>
                 </Card>
             )}
          </div>
-
       </div>
-
     </div>
   );
 }

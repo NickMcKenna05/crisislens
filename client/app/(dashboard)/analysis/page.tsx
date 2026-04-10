@@ -16,7 +16,6 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  Bot,
   History,
   Info,
   Save,
@@ -427,40 +426,15 @@ export default function AnalysisDashboardPage() {
           </CardContent>
         </Card>
 
-        <Card
-          className="bg-slate-900 text-white border-slate-800 cursor-pointer hover:bg-slate-800 transition-colors group relative overflow-hidden"
-          onClick={() => setIsScoreModalOpen(true)}
-        >
-          <div className="absolute top-0 left-0 w-1 h-full bg-blue-500 group-hover:bg-blue-400 transition-colors" />
-          <CardHeader className="pb-2 text-center relative">
-            <CardTitle className="text-slate-400 text-xs uppercase tracking-widest flex items-center justify-center gap-2 group-hover:text-white transition-colors">
-              Vulnerability Score
-              <Info size={14} className="text-slate-500 group-hover:text-blue-400" />
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-center pb-6">
-            <div
-              className={`text-6xl font-bold transition-all duration-700 ${
-                (summaryMetrics?.vulnerabilityScore ?? 0) > 50 ? "text-red-500" : "text-green-400"
-              }`}
-            >
-              {summaryMetrics?.vulnerabilityScore ?? "--"}
-            </div>
-            <div className="text-[10px] text-slate-500 uppercase mt-2 font-bold tracking-tighter">
-              {(summaryMetrics?.vulnerabilityScore ?? 0) > 50
-                ? "Aggressive Risk"
-                : summaryMetrics
-                ? "Defensive Shield"
-                : "Waiting for Data"}
-            </div>
-          </CardContent>
-        </Card>
-
         {riskGauge && (
-          <Card className="border-l-4 border-l-violet-500 shadow-sm">
+          <Card 
+            className="border-l-4 border-l-violet-500 shadow-sm cursor-pointer hover:shadow-md transition-all hover:bg-slate-50 group"
+            onClick={() => setIsScoreModalOpen(true)}
+          >
             <CardHeader>
-              <CardTitle className="text-sm text-slate-500 uppercase flex items-center gap-2">
+              <CardTitle className="text-sm text-slate-500 uppercase flex items-center gap-2 group-hover:text-violet-600 transition-colors">
                 <Gauge size={16} /> Risk Gauge
+                <Info size={14} className="ml-auto text-slate-400 group-hover:text-violet-500" />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -492,7 +466,7 @@ export default function AnalysisDashboardPage() {
               </div>
               <p className="mt-3 text-xs text-slate-500">
                 Composite 0–100 score based on volatility, drawdown, concentration, and
-                risk-adjusted return.
+                risk-adjusted return. Click to learn more.
               </p>
             </CardContent>
           </Card>
@@ -627,59 +601,6 @@ export default function AnalysisDashboardPage() {
             </CardContent>
           </Card>
         )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Card className="border-l-4 border-l-blue-500 shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-sm text-slate-500 uppercase">Crisis Sensitivities</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
-                <div className="flex flex-col">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">
-                    Top Strategic Hedge
-                  </span>
-                  <span className="font-semibold text-blue-700">
-                    {summaryMetrics?.topHedge || "Calculating..."}
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
-                <div className="flex flex-col">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">
-                    Primary Risk Factor
-                  </span>
-                  <span className="font-semibold text-red-700">
-                    {summaryMetrics?.topRisk || "Calculating..."}
-                  </span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-blue-600 text-white shadow-lg shadow-blue-200">
-            <CardHeader>
-              <CardTitle className="text-blue-100 text-sm flex items-center gap-2">
-                <Bot size={18} /> Strategic Insight
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {summaryMetrics ? (
-                <p className="text-lg font-medium leading-tight">
-                  Your portfolio has a beta of{" "}
-                  <span className="text-blue-200 underline">{summaryMetrics.portfolioBeta}</span> relative
-                  to this crisis. Expect a peak drawdown of{" "}
-                  <span className="text-blue-200">{summaryMetrics.maxDrawdown}%</span> compared to the
-                  market&apos;s {summaryMetrics.marketDrawdown}%.
-                </p>
-              ) : (
-                <p className="text-blue-200 animate-pulse italic">
-                  Run simulation to generate strategic insight...
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
 
         {riskMetrics && (
           <Card className="shadow-sm">
@@ -846,7 +767,7 @@ export default function AnalysisDashboardPage() {
 
             <h2 className="text-xl font-bold text-slate-900 mb-2">Understanding Your Score</h2>
             <p className="text-sm text-slate-600 mb-8 leading-relaxed">
-              The Vulnerability Score measures your portfolio&apos;s sensitivity to the active crisis.
+              The Risk Gauge measures your portfolio&apos;s sensitivity to the active crisis.
               A score of 50 means your portfolio roughly moves with the S&amp;P 500.
             </p>
 
