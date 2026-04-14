@@ -25,21 +25,32 @@ async def run_chaos_simulation(request: ChaosRequest):
         base_url="https://api.groq.com/openai/v1"
     )
 
-    # Format portfolio holdings so the model knows what's actually in each portfolio
+    # 1. Format portfolio holdings AND build the choices array for the UI Action
     portfolio_lines = []
-    for p in request.portfolios:
+    portfolio_choices = []
+    
+    for i, p in enumerate(request.portfolios):
+        p_id = p.get("id", str(i))
+        p_name = p.get("name", f"Portfolio {i}")
+        
+        # Build the exact JSON choice structure the frontend expects
+        portfolio_choices.append({"id": p_id, "label": p_name})
+        
         holdings = p.get("holdings", [])
         if holdings:
             ticker_str = ", ".join([
                 f"{h.get('ticker', '?')} ({h.get('shares', 0)} shares{', ' + h.get('sector') if h.get('sector') else ''})"
                 for h in holdings
             ])
-            portfolio_lines.append(f"  - {p.get('name', 'Unknown')}: {ticker_str}")
+            portfolio_lines.append(f"  - {p_name} (ID: {p_id}): {ticker_str}")
         else:
-            portfolio_lines.append(f"  - {p.get('name', 'Unknown')}: (no holdings)")
+            portfolio_lines.append(f"  - {p_name} (ID: {p_id}): (no holdings)")
 
     portfolio_context = "\n".join(portfolio_lines) if portfolio_lines else "No portfolios found."
     dashboard_context = json.dumps(request.current_dashboard, indent=2) if request.current_dashboard else "None"
+    
+    # Convert the choices list to a JSON string to inject directly into the prompt
+    choices_json_str = json.dumps(portfolio_choices)
 
     system_prompt = f"""You are 'Chaos Agent', an expert financial risk analyst AI. You help users simulate Black Swan events, understand their market impact, and have in-depth conversations about the results.
 
@@ -52,14 +63,25 @@ CURRENTLY DISPLAYED DASHBOARD:
 You always output valid JSON with exactly this structure:
 {{
     "agentMessage": "your response here",
-    "uiAction": {{"type": "none" | "options", "choices": [...]}},
+    "uiAction": {{"type": "none" | "options" | "portfolio_select", "choices": [...]}},
     "dashboardData": null or {{...}}
 }}
 
-YOU OPERATE IN THREE MODES — choose based on the user's message:
+YOU OPERATE IN FOUR MODES — choose based on the user's message:
 
-MODE 1 - NEW SCENARIO (user describes a crisis you need one clarification on):
-Use this only if the scenario is genuinely unclear. Ask ONE question with up to 4 choices.
+MODE 1 - PORTFOLIO SELECTION (user describes a crisis but hasn't specified which portfolio to apply it to):
+Use this to ask the user which portfolio they want to stress-test.
+{{
+    "agentMessage": "That is a severe scenario. Which of your portfolios would you like to run this stress test against?",
+    "uiAction": {{
+        "type": "portfolio_select",
+        "choices": {choices_json_str}
+    }},
+    "dashboardData": null
+}}
+
+MODE 2 - CLARIFY SCENARIO (you know the portfolio, but the scenario angle is unclear):
+Ask ONE question with up to 4 choices.
 {{
     "agentMessage": "Interesting scenario. To focus the analysis — which angle matters most to you?",
     "uiAction": {{
@@ -74,9 +96,9 @@ Use this only if the scenario is genuinely unclear. Ask ONE question with up to 
     "dashboardData": null
 }}
 
-MODE 2 - GENERATE ANALYSIS (you have enough info — use this as often as possible):
-Generate the dashboard AND write a rich explanation. agentMessage must be 4-6 sentences covering: what triggers the shock, which sectors are hit and WHY, the transmission mechanism, and any historical parallel.
-For recommendations: scan the user's actual portfolio holdings and give a specific action for each relevant ticker. Actions must be exactly one of: "reduce", "hold", or "increase". Only include tickers from the user's portfolios. Give 3-6 recommendations max. Base them on each stock's sector exposure to this specific event.
+MODE 3 - GENERATE ANALYSIS (you have the crisis and the target portfolio — use this as often as possible):
+Generate the dashboard AND write a rich explanation. agentMessage must be 4-6 sentences covering the economics.
+For recommendations: scan the selected portfolio's actual holdings and give a specific action for each relevant ticker ("reduce", "hold", or "increase"). Base them on each stock's sector exposure. Give 3-6 recommendations max.
 {{
     "agentMessage": "Detailed explanation here — not a template. Explain the economics.",
     "uiAction": {{"type": "none", "choices": []}},
@@ -84,7 +106,6 @@ For recommendations: scan the user's actual portfolio holdings and give a specif
         "title": "Punchy event title",
         "projectedLoss": "-18.5%",
         "recoveryTime": "14 Months",
-        Include 5-7 impactedSectors covering the most relevant sectors for this event. Not all need to be negative — some sectors benefit from certain crises (e.g. Defense during geopolitical events, Energy during supply shocks).
         "impactedSectors": [
             {{"name": "Sector", "change": "-24%", "status": "critical"}},
             {{"name": "Sector", "change": "+3%", "status": "positive"}},
@@ -98,7 +119,7 @@ For recommendations: scan the user's actual portfolio holdings and give a specif
     }}
 }}
 
-MODE 3 - CONVERSATION (follow-up questions, requests to explain, portfolio-specific questions):
+MODE 4 - CONVERSATION (follow-up questions, requests to explain, portfolio-specific questions):
 Do NOT regenerate the dashboard. Keep dashboardData as null. Have a real conversation.
 Reference the currently displayed dashboard if relevant. Use the actual portfolio holdings to give specific advice.
 {{
@@ -108,10 +129,10 @@ Reference the currently displayed dashboard if relevant. Use the actual portfoli
 }}
 
 DECISION RULE:
-- New crisis description with no prior context → MODE 1 or 2
-- User picks an option or gives more detail → MODE 2
-- User asks "why", "explain", "what does this mean", "what about my portfolio", "how does X affect Y" → MODE 3
-- User references the dashboard results → MODE 3
+- New crisis description with no portfolio specified → MODE 1
+- New crisis description, portfolio known but angle unclear → MODE 2
+- User picks an option or you have enough info → MODE 3
+- User asks a follow-up question or references the dashboard → MODE 4
 
 Output ONLY valid JSON. No markdown, no text outside the JSON."""
 
@@ -144,4 +165,3 @@ Output ONLY valid JSON. No markdown, no text outside the JSON."""
     except Exception as e:
         print(f"Chaos Agent Error: {e}")
         raise HTTPException(status_code=500, detail="Failed to reach the Chaos Agent. Check your GROQ_API_KEY.")
-
