@@ -1,17 +1,35 @@
+# Web Framework & Server
 fastapi
 uvicorn[standard]
-pandas
-numpy
-yfinance
-sqlalchemy
-psycopg2-binary
-python-dotenv
+python-multipart
+
+# External Requests
 requests
-openai
 httpx
-pydantic
-python-jose[cryptography]
-pydantic-settings
+
+# Data Science & Quant Finance
+pandas==2.2.3
+numpy
+scipy
+yfinance
+statsmodels
+
+# Machine Learning & AI
+openai
 tensorflow
 scikit-learn
 keras
+
+# Database & ORM
+sqlalchemy
+psycopg2-binary
+alembic
+
+# Security & Authentication
+python-jose[cryptography]
+passlib[bcrypt]
+
+# Configuration & Environment
+python-dotenv
+pydantic
+pydantic-settings

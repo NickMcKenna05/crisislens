@@ -465,8 +465,7 @@ export default function AnalysisDashboardPage() {
                 />
               </div>
               <p className="mt-3 text-xs text-slate-500">
-                Composite 0–100 score based on volatility, drawdown, concentration, and
-                risk-adjusted return. Click to learn more.
+                Composite 0–100 score based on volatility, drawdown, and concentration.
               </p>
             </CardContent>
           </Card>
@@ -558,6 +557,13 @@ export default function AnalysisDashboardPage() {
               {activeSavedRun
                 ? `Saved Run: "${activeSavedRun.notes || activeSavedRun.scenario_name}"`
                 : `${selectedScenarioData.label} Impact`}
+              
+              {/* SYNTHETIC BACKFILL INDICATOR */}
+              {(analysisResult as any)?.isSyntheticBackfillUsed && (
+                <span className="ml-3 px-2 py-0.5 text-[10px] font-bold bg-purple-100 text-purple-700 rounded-full border border-purple-200">
+                  Factor Simulated
+                </span>
+              )}
             </CardTitle>
             <div className="flex gap-2">
               <Button

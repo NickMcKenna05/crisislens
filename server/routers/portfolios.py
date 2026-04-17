@@ -15,6 +15,7 @@ from services.risk import (
     calculate_risk_metrics,
     calculate_sector_attribution,
     calculate_risk_score,
+    fetch_and_prepare_portfolio_data
 )
 
 router = APIRouter(
@@ -623,29 +624,17 @@ async def get_portfolio_history(
 
     try:
         if start and end:
-            downloaded = yf.download(
-                tickers,
-                start=start,
-                end=end,
-                interval="1d",
-                progress=False
-            )
+            data = fetch_and_prepare_portfolio_data(tickers=tickers, start_date=start, end_date=end)
         else:
-            downloaded = yf.download(
-                tickers,
-                period=period,
-                interval="1d",
-                progress=False
-            )
-
-        if "Close" not in downloaded:
-            return []
-
-        data = build_price_frame(downloaded["Close"], tickers)
+            # For standard period lookbacks (like "1y"), just use yfinance directly
+            # since we know the stocks exist in recent history
+            downloaded = yf.download(tickers, period=period, interval="1d", progress=False)
+            if "Close" not in downloaded:
+                return []
+            data = build_price_frame(downloaded["Close"], tickers).ffill().dropna(how="all")
+            
         if data.empty:
             return []
-
-        data = data.ffill().dropna(how="all")
 
         history_series = pd.Series(0.0, index=data.index)
         for ticker, shares in holding_map.items():
@@ -855,19 +844,13 @@ async def analyze_portfolio_crisis(
             for date, port_val, market_val in zip(market_close.index, indexed_portfolio, indexed_market)
         ]
 
-        # -------- NEW: fetch historical stock data for FR-10 / FR-11 / FR-12 --------
-        historical_download = yf.download(
-            tickers_list,
-            start=start,
-            end=end,
-            interval="1d",
-            progress=False
+        
+        
+        stock_prices = fetch_and_prepare_portfolio_data(
+            tickers=tickers_list,
+            start_date=start,
+            end_date=end
         )
-
-        stock_prices = pd.DataFrame()
-        if "Close" in historical_download:
-            stock_prices = build_price_frame(historical_download["Close"], tickers_list)
-            stock_prices = stock_prices.ffill().dropna(how="all")
 
         portfolio_series = pd.Series(dtype=float)
         if not stock_prices.empty:

@@ -4,6 +4,11 @@ import math
 from typing import Dict, List, Union
 
 import pandas as pd
+import statsmodels.api as sm
+
+import yfinance as yf
+import pandas_datareader.data as web
+from datetime import datetime, timedelta
 
 
 TRADING_DAYS_PER_YEAR = 252
@@ -194,29 +199,21 @@ def calculate_risk_score(
 ) -> Dict[str, Union[int, str]]:
     """
     Convert portfolio metrics into a simple 0-100 composite risk score.
-    Higher = riskier.
+    Higher = riskier. Purely based on risk factors, not rewarding returns.
     """
 
     volatility = _safe_float(metrics.get("volatility"))
     max_drawdown = _safe_float(metrics.get("max_drawdown"))
-    annualized_return = _safe_float(metrics.get("annualized_return"))
-    sharpe_ratio = _safe_float(metrics.get("sharpe_ratio"))
 
     top_sector_weight = 0.0
     if sector_attribution:
         top_sector_weight = max(_safe_float(item.get("weight")) for item in sector_attribution)
 
-    volatility_component = min((volatility / 60.0) * 35.0, 35.0)
-    drawdown_component = min((max_drawdown / 60.0) * 35.0, 35.0)
+    volatility_component = min((volatility / 60.0) * 40.0, 40.0)
+    drawdown_component = min((max_drawdown / 60.0) * 40.0, 40.0)
     concentration_component = min((top_sector_weight / 100.0) * 20.0, 20.0)
 
-    reward_adjustment = 0.0
-    if sharpe_ratio > 0:
-        reward_adjustment += min(sharpe_ratio * 4.0, 8.0)
-    if annualized_return > 0:
-        reward_adjustment += min(annualized_return / 10.0, 10.0)
-
-    raw_score = volatility_component + drawdown_component + concentration_component - reward_adjustment
+    raw_score = volatility_component + drawdown_component + concentration_component
     score = int(round(max(0.0, min(100.0, raw_score))))
 
     if score < 34:
@@ -230,3 +227,186 @@ def calculate_risk_score(
         "score": score,
         "label": label,
     }
+
+# ==============================================================================
+# FAMA-FRENCH FACTOR SIMULATION (PRE-PROCESSING)
+# ==============================================================================
+
+def _calculate_factor_loadings(modern_asset_returns: pd.Series, modern_factor_returns: pd.DataFrame) -> dict:
+    """
+    Calculates the sensitivity (Betas) of a modern asset to core market factors.
+    modern_factor_returns should contain columns like ['Mkt-RF', 'SMB', 'HML'].
+    """
+    aligned = pd.concat([modern_asset_returns.rename("asset"), modern_factor_returns], axis=1).dropna()
+    
+    if len(aligned) < 60:  # Require at least ~3 months of modern data to get reliable betas
+        return {}
+
+    y = aligned["asset"]
+    X = sm.add_constant(aligned.drop(columns=["asset"]))
+    
+    model = sm.OLS(y, X).fit()
+    return model.params.to_dict()
+
+
+def _generate_synthetic_returns(loadings: dict, historical_factors: pd.DataFrame) -> pd.Series:
+    """
+    Reconstructs the past using the modern betas and historical factor data.
+    """
+    synth_returns = pd.Series(0.0, index=historical_factors.index)
+    
+    for factor, beta in loadings.items():
+        if factor == "const":
+            synth_returns += beta
+        elif factor in historical_factors.columns:
+            synth_returns += beta * historical_factors[factor]
+            
+    return synth_returns
+
+
+def backfill_price_history(
+    stock_prices: pd.DataFrame, 
+    historical_factors: pd.DataFrame, 
+    modern_factors: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Checks for missing data in the user's date range, calculates betas, 
+    synthesizes past returns, and stitches them to real returns.
+    """
+    filled_prices = stock_prices.copy()
+    
+    for ticker in filled_prices.columns:
+        series = filled_prices[ticker].dropna()
+        
+        # If the stock has a full history for the requested window, skip it
+        if not series.empty and len(series) >= len(historical_factors):
+            continue
+            
+        # 1. Get the modern returns for this ticker
+        modern_returns = _daily_returns(series)
+        
+        # 2. Find its factor DNA
+        loadings = _calculate_factor_loadings(modern_returns, modern_factors)
+        if not loadings:
+            continue
+            
+        # 3. Generate synthetic historical daily returns
+        synthetic_returns = _generate_synthetic_returns(loadings, historical_factors)
+        
+        # 4. Convert synthetic returns back into a normalized price index (start at 100)
+        synthetic_prices = (1 + synthetic_returns).cumprod() * 100
+        
+        # 5. Stitch synthetic prices to real prices
+        # (This combines the newly generated past with the existing present)
+        filled_prices[ticker] = filled_prices[ticker].combine_first(synthetic_prices)
+
+    return filled_prices
+
+
+def get_fama_french_factors(start_date: str, end_date: str) -> pd.DataFrame:
+    """Fetches Fama-French daily factors from Dartmouth's library."""
+    try:
+        # F-F data is typically accessed by month/year strings
+        ff_dict = web.DataReader('F-F_Research_Data_Factors_daily', 'famafrench', start=start_date, end=end_date)
+        # The [0] index gets the actual dataframe. F-F provides data in percentages, so we divide by 100.
+        ff_df = ff_dict[0] / 100.0
+        return ff_df
+    except Exception as e:
+        print(f"Error fetching Fama-French data: {e}")
+        return pd.DataFrame()
+
+def fetch_and_prepare_portfolio_data(
+    tickers: List[str], 
+    start_date: str, 
+    end_date: str
+) -> pd.DataFrame:
+    """
+    The Master Data Fetcher. 
+    1. Tries to get historical data for the crisis.
+    2. Identifies missing (unborn) stocks.
+    3. Fetches modern data for those stocks + modern F-F factors to get Betas.
+    4. Synthesizes the crisis data using historical F-F factors.
+    """
+    
+    print(f"Fetching real historical data for {start_date} to {end_date}...")
+    
+    # 1. Safely fetch historical data using "Close"
+    downloaded = yf.download(tickers, start=start_date, end=end_date)
+    if "Close" in downloaded:
+        raw_data = downloaded["Close"].copy()
+    elif "Adj Close" in downloaded:
+        raw_data = downloaded["Adj Close"].copy()
+    else:
+        raw_data = pd.DataFrame(columns=tickers)
+    
+    # If there's only one ticker, yfinance returns a Series. Convert to DataFrame.
+    if isinstance(raw_data, pd.Series):
+        raw_data = raw_data.to_frame(name=tickers[0])
+        
+    missing_tickers = []
+    for ticker in tickers:
+        # If the column is missing entirely or is completely full of NaNs
+        if ticker not in raw_data.columns or raw_data[ticker].dropna().empty:
+            missing_tickers.append(ticker)
+            # Ensure the column exists in the dataframe so we can backfill it
+            if ticker not in raw_data.columns:
+                raw_data[ticker] = pd.NA
+
+    if not missing_tickers:
+        print("All stocks existed during this period. No synthesis needed.")
+        return raw_data.ffill().dropna(how="all")
+
+    print(f"Missing history for: {missing_tickers}. Initiating Fama-French Synthesis...")
+
+    # 2. Setup date ranges for modern Beta calculation (Last 3 years)
+    modern_end = datetime.now()
+    modern_start = modern_end - timedelta(days=3*365)
+    modern_start_str = modern_start.strftime('%Y-%m-%d')
+    modern_end_str = modern_end.strftime('%Y-%m-%d')
+
+    # 3. Safely fetch Modern Prices & Modern Factors
+    mod_downloaded = yf.download(missing_tickers, start=modern_start_str, end=modern_end_str)
+    if "Close" in mod_downloaded:
+        modern_prices = mod_downloaded["Close"].copy()
+    else:
+        modern_prices = pd.DataFrame(columns=missing_tickers)
+        
+    if isinstance(modern_prices, pd.Series):
+        modern_prices = modern_prices.to_frame(name=missing_tickers[0])
+        
+    modern_factors = get_fama_french_factors(modern_start_str, modern_end_str)
+    
+    # 4. Fetch Historical Factors for the crisis period
+    historical_factors = get_fama_french_factors(start_date, end_date)
+
+    if modern_factors.empty or historical_factors.empty:
+        print("Failed to load factor data. Falling back to incomplete portfolio.")
+        return raw_data.ffill().dropna(how="all")
+
+    # 5. Route through the backfill logic
+    for ticker in missing_tickers:
+        if ticker not in modern_prices.columns:
+            continue
+            
+        series = modern_prices[ticker].dropna()
+        if len(series) < 60:
+            print(f"Not enough modern data to calculate Beta for {ticker}. Skipping.")
+            continue
+            
+        modern_returns = _daily_returns(series)
+        loadings = _calculate_factor_loadings(modern_returns, modern_factors)
+        
+        if loadings:
+            synthetic_returns = _generate_synthetic_returns(loadings, historical_factors)
+            
+            # Start the synthetic price index at 100
+            synthetic_prices = (1 + synthetic_returns).cumprod() * 100
+            
+            # Align the synthetic index to match the raw_data index
+            aligned_synthetic = pd.Series(index=raw_data.index, dtype=float)
+            aligned_synthetic.update(synthetic_prices)
+            
+            raw_data[ticker] = aligned_synthetic
+            print(f"Successfully synthesized history for {ticker}")
+
+    return raw_data.ffill().dropna(how="all")
