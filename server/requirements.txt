@@ -13,6 +13,7 @@ numpy
 scipy
 yfinance
 statsmodels
+pandas_datareader
 
 # Machine Learning & AI
 openai
