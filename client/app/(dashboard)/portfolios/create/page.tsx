@@ -46,7 +46,7 @@ export default function CreatePortfolioPage() {
         if (!h.ticker) return null;
 
         try {
-          const res = await fetch(`http://localhost:8000/tickers/search?q=${h.ticker}`);
+          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://crisislens.onrender.com"}/tickers/search?q=${h.ticker}`);
           const data = await res.json();
 
           if (!Array.isArray(data) || data.length ===0)

@@ -46,7 +46,7 @@ export function TickerSearch({ value, onChange }: TickerSearchProps) {
     const fetchTickers = async () => {
       setIsLoading(true);
       try {
-        const res = await fetch(`http://localhost:8000/tickers/search?q=${debouncedSearch}`);
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://crisislens.onrender.com"}/tickers/search?q=${debouncedSearch}`);
         const data = await res.json();
         // Ensure data is an array to prevent crashes
         setResults(Array.isArray(data) ? data : []);

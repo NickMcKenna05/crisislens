@@ -63,7 +63,7 @@ export default function SimulationPage() {
     setAccuracy(null);
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/forecast/lstm/${selectedPortfolioId}?timeframe=${timeframe}`);
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://crisislens.onrender.com"}/forecast/lstm/${selectedPortfolioId}?timeframe=${timeframe}`);
       if (!response.body) throw new Error("No response body");
 
       const reader = response.body.getReader();
@@ -111,7 +111,7 @@ export default function SimulationPage() {
     setIsTyping(true);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/chaos/simulate", {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://crisislens.onrender.com"}/chaos/simulate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: newMessages, portfolios, current_dashboard: simulationResult }),

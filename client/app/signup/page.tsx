@@ -40,7 +40,7 @@ export default function SignUpPage() {
         router.push("/portfolios");
       } else {
         // Send confirmation email via our backend (bypasses Supabase SMTP)
-        await fetch("http://localhost:8000/auth/send-confirmation", {
+        await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://crisislens.onrender.com"}/auth/send-confirmation`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, password }),
